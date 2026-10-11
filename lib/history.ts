@@ -8,6 +8,8 @@ export type Msg = {
   content: string;
   error?: string;
   modelKey?: string; // assistant: which model option answered
+  images?: string[]; // user: ~200px JPEG thumbnails (data URLs), persisted
+  full?: string[]; // user: the resized images actually sent; memory only, never persisted
 };
 
 export type Conversation = {
@@ -125,7 +127,8 @@ export function saveHistory(
     const quotaPruned = capped - list.length;
     if (!storage) return { ok: false, quotaPruned, history: current };
     try {
-      storage.setItem(STORE_KEY, JSON.stringify({ v: 2, ...current }));
+      // Full-size images stay in memory only; storage keeps the small thumbnails.
+      storage.setItem(STORE_KEY, JSON.stringify({ v: 2, ...current }, (k, v) => (k === "full" ? undefined : v)));
       return { ok: true, quotaPruned, history: current };
     } catch (e) {
       const next = isQuotaError(e) ? dropOldest(list, history.activeId) : null;

@@ -1,16 +1,26 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUp, Check, Copy, Menu, Square, SquarePen } from "lucide-react";
-import { ERROR_MARK, MAX_CHARS, MSG_GENERIC } from "@/lib/chat";
+import { ArrowUp, Check, Copy, ImagePlus, Menu, Square, SquarePen, X } from "lucide-react";
+import { ERROR_MARK, MAX_CHARS, MSG_GENERIC, prepareHistory } from "@/lib/chat";
 import { loadHistory, makeTitle, newId, saveHistory, type Conversation, type Msg } from "@/lib/history";
+import { IMAGE_ERRORS, MAX_BODY_BYTES, MAX_IMAGES } from "@/lib/images";
 import type { PublicModel } from "@/lib/models";
 import ModelPicker from "./ModelPicker";
 import Sidebar from "./Sidebar";
 
 // Markdown is split into its own chunk so the page is ready to type before it loads.
 const Markdown = lazy(() => import("./Markdown"));
+
+// Image resizing code loads on the first attach, not with the page.
+type Processor = typeof import("@/lib/imageProcess");
+let processor: Promise<Processor> | null = null;
+const loadProcessor = () => (processor ??= import("@/lib/imageProcess"));
+const MSG_IMAGE_FAILED = "לא הצלחנו לעבד את התמונה. נסו שוב או בחרו תמונה אחרת.";
+
+// A slot is added per picked file (in pick order) and filled once processing finishes.
+type Attachment = { id: string; thumb?: string; full?: string };
 
 const NO_MESSAGES: Msg[] = [];
 const MSG_NETWORK = "אין חיבור לאינטרנט, או שהחיבור נקטע. נסו שוב.";
@@ -51,6 +61,9 @@ export default function Chat() {
   const [toast, setToast] = useState<string | null>(null);
   const [models, setModels] = useState<PublicModel[] | null>(null);
   const [lastKey, setLastKey] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [viewer, setViewer] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const stickRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -68,6 +81,41 @@ export default function Chat() {
   const wantedKey = active ? active.modelKey : (lastKey ?? undefined);
   const currentKey = !models || models.some((m) => m.key === wantedKey) ? wantedKey : models[0]?.key;
   const labelOf = (key?: string) => (models && models.length > 1 ? models.find((m) => m.key === key)?.label : undefined);
+  // Images only for options that accept them; otherwise the attach button is hidden.
+  const canAttach = !!models?.find((m) => m.key === currentKey)?.vision;
+  const shown = canAttach ? attachments : []; // hidden (and not sent) for text-only options
+  const pending = shown.filter((a): a is Required<Attachment> => !!a.full);
+  const processing = shown.length - pending.length;
+  const closeViewer = useCallback(() => setViewer(null), []);
+
+  async function addImages(files: File[]) {
+    const room = MAX_IMAGES - attachments.length;
+    if (files.length > room) setToast(IMAGE_ERRORS.count);
+    const slots = files.slice(0, Math.max(0, room)).map((file) => ({ file, id: newId() }));
+    if (!slots.length) return;
+    setAttachments((a) => [...a, ...slots.map(({ id }) => ({ id }))]);
+    const drop = (id: string) => setAttachments((a) => a.filter((x) => x.id !== id));
+    let lib: Processor;
+    try {
+      lib = await loadProcessor();
+    } catch {
+      processor = null; // retry the download next time
+      slots.forEach(({ id }) => drop(id));
+      setToast(MSG_IMAGE_FAILED);
+      return;
+    }
+    await Promise.all(
+      slots.map(async ({ file, id }) => {
+        try {
+          const img = await lib.prepareImage(file);
+          setAttachments((a) => a.map((x) => (x.id === id ? { id, ...img } : x)));
+        } catch (e) {
+          drop(id);
+          setToast(e instanceof lib.ImageError ? e.message : MSG_IMAGE_FAILED);
+        }
+      }),
+    );
+  }
 
   useEffect(() => {
     // localStorage only exists in the browser, so history loads after hydration.
@@ -162,12 +210,16 @@ export default function Chat() {
 
   async function send(raw: string) {
     const text = raw.trim();
-    if (!text || streaming || !convs) return;
+    const imgs = pending;
+    if ((!text && !imgs.length) || streaming || !convs || processing) return;
 
     const now = Date.now();
     const id = active?.id ?? newId();
     const modelKey = currentKey;
-    const history: Msg[] = [...messages, { role: "user", content: text }];
+    const userMsg: Msg = imgs.length
+      ? { role: "user", content: text, images: imgs.map((a) => a.thumb), full: imgs.map((a) => a.full) }
+      : { role: "user", content: text };
+    const history: Msg[] = [...messages, userMsg];
     const withAnswer: Msg[] = [...history, { role: "assistant", content: "", modelKey }];
     if (active) {
       updateConv(id, (c) => ({ ...c, updatedAt: now, messages: withAnswer, modelKey }));
@@ -175,7 +227,7 @@ export default function Chat() {
       // A conversation only exists once its first message is sent.
       const c: Conversation = {
         id,
-        title: makeTitle(text),
+        title: makeTitle(text || "תמונה"),
         createdAt: now,
         updatedAt: now,
         pinned: false,
@@ -186,6 +238,7 @@ export default function Chat() {
       setActiveId(id);
     }
     setInput("");
+    if (imgs.length) setAttachments([]);
     setStreaming(true);
     stickRef.current = true;
 
@@ -197,15 +250,20 @@ export default function Chat() {
 
     let acc = "";
     try {
+      // Same shaping as the server: only the newest image message carries image data
+      // (full size if still in memory, else its thumbnail); older ones become a placeholder.
+      const payload = prepareHistory(
+        history
+          .filter((m) => !m.error && (m.content || m.images?.length))
+          .map((m) => ({ role: m.role, content: m.content, images: m.full ?? m.images })),
+        { vision: canAttach },
+      );
+      const body = JSON.stringify({ messages: payload, modelKey });
+      if (body.length > MAX_BODY_BYTES) throw new Error(IMAGE_ERRORS.body);
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: history
-            .filter((m) => m.content && !m.error)
-            .map(({ role, content }) => ({ role, content })),
-          modelKey,
-        }),
+        body,
         signal: ctrl.signal,
       });
       if (res.status === 401) {
@@ -351,13 +409,30 @@ export default function Chat() {
             <div key={activeId} className="space-y-7 pt-3 pb-8" aria-live="polite">
               {messages.map((m, i) =>
                 m.role === "user" ? (
-                  <div key={i} className="msg-in flex justify-start">
-                    <div
-                      dir="auto"
-                      className="max-w-[85%] rounded-3xl bg-bubble px-4 py-2.5 wrap-break-word whitespace-pre-wrap"
-                    >
-                      {m.content}
-                    </div>
+                  <div key={i} className="msg-in flex flex-col items-start gap-1.5">
+                    {!!m.images?.length && (
+                      <div className="flex max-w-[85%] flex-wrap gap-1.5">
+                        {m.images.map((src, j) => (
+                          <button
+                            key={j}
+                            type="button"
+                            onClick={() => setViewer(m.full?.[j] ?? src)}
+                            aria-label={`הגדלת תמונה ${j + 1}`}
+                            className="press overflow-hidden rounded-2xl bg-bubble transition-transform"
+                          >
+                            <Img src={m.full?.[j] ?? src} alt="" className="size-28 object-cover" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {m.content && (
+                      <div
+                        dir="auto"
+                        className="max-w-[85%] rounded-3xl bg-bubble px-4 py-2.5 wrap-break-word whitespace-pre-wrap"
+                      >
+                        {m.content}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div key={i} className="msg-in">
@@ -400,7 +475,57 @@ export default function Chat() {
             }}
             className="mx-auto max-w-3xl px-3 sm:px-5"
           >
-            <div className="flex items-end gap-2 rounded-[1.75rem] border border-line bg-surface p-2 ps-4 shadow-[0_1px_8px_rgb(0_0_0/0.04)] transition-[border-color] focus-within:border-muted/50">
+            <div className="rounded-[1.75rem] border border-line bg-surface p-2 shadow-[0_1px_8px_rgb(0_0_0/0.04)] transition-[border-color] focus-within:border-muted/50">
+              {shown.length > 0 && (
+                <div className="flex gap-2.5 px-1.5 pt-1.5 pb-2.5">
+                  {shown.map((a, i) => (
+                    <div key={a.id} className="fade-in relative size-16 shrink-0">
+                      {a.thumb ? (
+                        <Img src={a.thumb} alt={`תמונה מצורפת ${i + 1}`} className="size-16 rounded-xl object-cover" />
+                      ) : (
+                        <div role="status" aria-label="מעבד תמונה…" className="size-16 animate-pulse rounded-xl bg-bubble" />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setAttachments((list) => list.filter((x) => x.id !== a.id))}
+                        aria-label={`הסרת תמונה ${i + 1}`}
+                        title="הסרה"
+                        className="press absolute -inset-s-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full bg-fg text-bg shadow transition-transform"
+                      >
+                        <X size={14} strokeWidth={2.5} aria-hidden />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-end gap-1.5">
+              {canAttach && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void loadProcessor().catch(() => {}); // start downloading while the picker is open
+                    fileRef.current?.click();
+                  }}
+                  disabled={attachments.length >= MAX_IMAGES}
+                  aria-label="צירוף תמונה"
+                  title="צירוף תמונה"
+                  className="press flex size-10 shrink-0 items-center justify-center rounded-full text-muted transition-[background-color,color,opacity,transform] hover:bg-bubble hover:text-fg disabled:opacity-35"
+                >
+                  <ImagePlus size={21} aria-hidden />
+                </button>
+              )}
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  const files = [...(e.target.files ?? [])];
+                  e.target.value = ""; // picking the same file again should still fire
+                  void addImages(files);
+                }}
+              />
               <textarea
                 ref={inputRef}
                 rows={1}
@@ -423,7 +548,9 @@ export default function Chat() {
                 }}
                 placeholder="שאלו כל דבר…"
                 aria-label="הודעה"
-                className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-2 leading-6 outline-none placeholder:text-muted"
+                className={`max-h-40 min-w-0 flex-1 resize-none bg-transparent py-2 leading-6 outline-none placeholder:text-muted ${
+                  canAttach ? "ps-0.5" : "ps-2"
+                }`}
               />
               {streaming ? (
                 <button
@@ -438,7 +565,7 @@ export default function Chat() {
               ) : (
                 <button
                   type="submit"
-                  disabled={!input.trim() || !convs}
+                  disabled={(!input.trim() && !pending.length) || !convs || processing > 0}
                   aria-label="שליחה"
                   title="שליחה"
                   className="press flex size-10 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg transition-[opacity,transform] disabled:opacity-30"
@@ -446,6 +573,7 @@ export default function Chat() {
                   <ArrowUp size={20} strokeWidth={2.25} aria-hidden />
                 </button>
               )}
+              </div>
             </div>
           </form>
         </div>
@@ -459,6 +587,46 @@ export default function Chat() {
           {toast}
         </div>
       )}
+
+      {viewer && <ImageViewer src={viewer} onClose={closeViewer} />}
+    </div>
+  );
+}
+
+// Images here are local data URLs (never remote), so next/image's optimizer has nothing to add.
+function Img({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src} alt={alt} className={className} decoding="async" draggable={false} />;
+}
+
+// Full-screen view of a sent image. Tap anywhere or Escape closes it.
+function ImageViewer({ src, onClose }: { src: string; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="תצוגת תמונה"
+      onClick={onClose}
+      className="fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 pt-[max(env(safe-area-inset-top),1rem)] pb-[max(env(safe-area-inset-bottom),1rem)]"
+    >
+      <Img src={src} alt="תמונה שצורפה" className="max-h-full max-w-full rounded-lg object-contain" />
+      <button
+        ref={closeRef}
+        type="button"
+        aria-label="סגירת התמונה"
+        title="סגירה"
+        className="press absolute inset-s-3 top-[calc(env(safe-area-inset-top)+0.75rem)] flex size-10 items-center justify-center rounded-full bg-white/15 text-white transition-transform"
+      >
+        <X size={22} aria-hidden />
+      </button>
     </div>
   );
 }

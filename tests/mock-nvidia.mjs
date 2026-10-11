@@ -43,9 +43,32 @@ http
     let raw = "";
     for await (const c of req) raw += c;
     const body = JSON.parse(raw);
-    const last = body.messages.at(-1).content;
-    console.log(`[mock] model=${body.model} messages=${body.messages.length} last=${JSON.stringify(last.slice(0, 40))}`);
+    // Content is a string, or (with images) an array of text + image_url parts.
+    const parts = (m) => (Array.isArray(m.content) ? m.content : [{ type: "text", text: m.content }]);
+    const textOf = (m) => parts(m).filter((p) => p.type === "text").map((p) => p.text).join(" ");
+    const imagesIn = (m) => parts(m).filter((p) => p.type === "image_url").length;
+    const lastMsg = body.messages.at(-1);
+    const last = textOf(lastMsg);
+    const lastImages = imagesIn(lastMsg);
+    console.log(
+      `[mock] model=${body.model} messages=${body.messages.length} images=${lastImages} last=${JSON.stringify(last.slice(0, 40))}`,
+    );
 
+    if (last.includes("מכסה יומית")) {
+      // Shaped like Gemini's free-tier daily limit error.
+      res.writeHead(429, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: {
+            code: 429,
+            message: "You exceeded your current quota. Quota exceeded for metric: free_tier_requests, limit: 20",
+            status: "RESOURCE_EXHAUSTED",
+            details: [{ violations: [{ quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier", quotaValue: "20" }] }],
+          },
+        }),
+      );
+      return;
+    }
     if (last.includes("מכסה")) {
       res.writeHead(429, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: { message: "rate limited" } }));
@@ -61,7 +84,14 @@ http
         : last.includes("איזה מודל")
           ? // Echo what the app actually sent upstream (model picker / allowlist tests).
             `model=${body.model} effort=${body.reasoning_effort ?? "-"}`
-          : (Object.entries(ANSWERS).find(([k]) => last.includes(k))?.[1] ?? `קיבלתי: ${last}`);
+          : last.includes("כמה תמונות")
+            ? // What reached the provider across the whole history (image-stripping tests).
+              `images=${body.messages.reduce((n, m) => n + imagesIn(m), 0)} placeholders=${
+                body.messages.filter((m) => textOf(m).includes("[תמונה שנשלחה קודם]")).length
+              }`
+            : lastImages
+              ? `אני רואה ${lastImages === 1 ? "תמונה אחת" : `${lastImages} תמונות`}. ההוראה: ${last}`
+              : (Object.entries(ANSWERS).find(([k]) => last.includes(k))?.[1] ?? `קיבלתי: ${last}`);
 
     for (let i = 0; i < text.length; i += 6) {
       if (res.destroyed) return;

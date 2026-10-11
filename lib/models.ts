@@ -1,12 +1,14 @@
 // Server-side model allowlist, configured by AI_MODELS. Pure functions, unit-tested.
 //
-// AI_MODELS = entries separated by commas, each `key|model id|label|description|effort|vision`:
+// AI_MODELS = entries separated by commas, each `key|model id|label|description|effort|vision`
+// (effort: none/low/medium/high, off = don't send it, empty = AI_REASONING_EFFORT):
 //   fast|gemini-3.6-flash|מהיר|לרוב השאלות|none|1,deep|gemini-3.6-flash|מעמיק|לשאלות מורכבות, איטי יותר|medium|1
 // An entry boundary is a comma right after the vision field and before the next `key|`,
 // so descriptions may contain commas. Malformed entries are skipped (with a warning).
 
-export const EFFORTS = ["none", "low", "medium", "high"] as const;
-export type Effort = (typeof EFFORTS)[number] | "";
+// "off" = don't send reasoning_effort at all (some models, e.g. Gemini Flash-Lite, reject it).
+export const EFFORTS = ["none", "low", "medium", "high", "off"] as const;
+export type Effort = Exclude<(typeof EFFORTS)[number], "off"> | "";
 
 export type ModelEntry = {
   key: string;
@@ -22,8 +24,11 @@ export type PublicModel = Pick<ModelEntry, "key" | "label" | "description" | "vi
 
 const KEY_RE = /^[a-z0-9_-]{1,32}$/i;
 
-function toEffort(v: string): Effort | null {
-  return v === "" || (EFFORTS as readonly string[]).includes(v) ? (v as Effort) : null;
+// Valid field → effort to send ("" = don't send); "default" = use AI_REASONING_EFFORT; null = invalid.
+function toEffort(v: string): Effort | "default" | null {
+  if (v === "") return "default";
+  if (v === "off") return "";
+  return (EFFORTS as readonly string[]).includes(v) ? (v as Effort) : null;
 }
 
 export function parseModels(
@@ -31,7 +36,9 @@ export function parseModels(
   fallback: { model?: string; effort: string },
   warn: (msg: string) => void = console.warn,
 ): ModelEntry[] {
-  const defaultEffort = toEffort(fallback.effort) ?? "none";
+  // AI_REASONING_EFFORT: empty or "off" = don't send; unknown values fall back to "none".
+  const g = toEffort(fallback.effort);
+  const defaultEffort: Effort = g === "default" ? "" : (g ?? "none");
   const entries: ModelEntry[] = [];
 
   for (const chunk of (raw ?? "").split(/(?<=\|\s*[01]?\s*)[,\n]\s*(?=[^|,\n]+\|)/)) {
@@ -47,7 +54,7 @@ export function parseModels(
       warn(`AI_MODELS: skipping duplicate key "${key}"`);
       continue;
     }
-    entries.push({ key, model, label, description, effort: e || defaultEffort, vision: vision === "1" });
+    entries.push({ key, model, label, description, effort: e === "default" ? defaultEffort : e, vision: vision === "1" });
   }
 
   if (entries.length) return entries;

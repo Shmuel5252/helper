@@ -32,6 +32,15 @@ test("empty effort uses AI_REASONING_EFFORT; spaces and newlines between entries
   );
 });
 
+test('"off" omits reasoning_effort; an empty AI_REASONING_EFFORT does too', () => {
+  const m = parseModels("a|m1|א||off|1,b|m2|ב|||1,c|m3|ג||high|0", { effort: "medium" }, quiet);
+  assert.deepEqual(m.map((e) => e.effort), ["", "medium", "high"]);
+  assert.deepEqual(parseModels("a|m1|א|||1", { effort: "" }, quiet)[0].effort, "");
+  assert.deepEqual(parseModels("a|m1|א|||1", { effort: "off" }, quiet)[0].effort, "");
+  assert.deepEqual(parseModels("a|m1|א|||1", { effort: "bogus" }, quiet)[0].effort, "none");
+  assert.deepEqual(parseModels(undefined, { model: "x", effort: "" }, quiet)[0].effort, "");
+});
+
 test("malformed entries are skipped with a warning, valid ones kept", () => {
   const warnings: string[] = [];
   const m = parseModels(

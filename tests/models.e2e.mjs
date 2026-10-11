@@ -193,6 +193,13 @@ for (const width of [375, 1280]) {
         const alert = page.locator(".msg-in").last().getByRole("alert");
         assert.match(await alert.innerText(), /חכו דקה.*אפשרות אחרת/);
       });
+
+      await check(`[${tag}] daily quota error says so, suggests another option or tomorrow`, async () => {
+        await send("בדיקת מכסה יומית");
+        const alert = page.locator(".msg-in").last().getByRole("alert");
+        assert.match(await alert.innerText(), /נגמרה המכסה היומית.*אפשרות אחרת.*מחר/);
+        await shot("daily-quota-error");
+      });
     }
 
     await ctx.close();

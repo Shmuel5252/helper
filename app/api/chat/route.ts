@@ -1,6 +1,8 @@
 import OpenAI from "openai";
-import { ERROR_MARK, prepareHistory } from "@/lib/chat";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { ERROR_MARK, prepareHistory, type ChatMessage } from "@/lib/chat";
 import { hebrewError } from "@/lib/errors";
+import { findImageError, IMAGE_ERRORS, MAX_BODY_BYTES } from "@/lib/images";
 import { resolveModel } from "@/lib/models";
 import { API_KEY, BASE_URL, MODELS } from "@/lib/serverConfig";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
@@ -19,24 +21,47 @@ function errorResponse(status: number, error: string) {
   return Response.json({ error }, { status });
 }
 
+// OpenAI-compatible shape: images go as a content array of text + image_url (data URL) parts.
+function toProvider(m: ChatMessage): ChatCompletionMessageParam {
+  if (m.role === "assistant" || !m.images) return { role: m.role, content: m.content };
+  return {
+    role: "user",
+    content: [
+      { type: "text", text: m.content },
+      ...m.images.map((url) => ({ type: "image_url" as const, image_url: { url } })),
+    ],
+  };
+}
+
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => null);
-  const messages = prepareHistory(body?.messages);
-  if (!messages) return errorResponse(400, "ההודעה ריקה או לא תקינה.");
+  const raw = await request.text().catch(() => "");
+  if (raw.length > MAX_BODY_BYTES) return errorResponse(413, IMAGE_ERRORS.body);
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return errorResponse(400, "ההודעה ריקה או לא תקינה.");
+  }
 
   // Only allowlisted entries; an unknown key silently gets the default. Never a client model id.
   const entry = resolveModel(MODELS, body?.modelKey);
   if (!API_KEY || !entry) {
     return errorResponse(500, "האתר עדיין לא הוגדר עד הסוף (חסר מפתח או מודל). פנו למנהל האתר.");
   }
-  const errorOpts = { alternatives: MODELS.length > 1 };
+
+  const imageError = findImageError(body?.messages);
+  if (imageError) return errorResponse(400, imageError);
+  const messages = prepareHistory(body?.messages, { vision: entry.vision });
+  if (!messages) return errorResponse(400, "ההודעה ריקה או לא תקינה.");
+  // Quotas are per model, so only an option on another model is a real alternative.
+  const errorOpts = { alternatives: MODELS.some((m) => m.model !== entry.model) };
 
   let stream;
   try {
     stream = await client.chat.completions.create(
       {
         model: entry.model,
-        messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
+        messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages.map(toProvider)],
         stream: true,
         temperature: 0.6,
         // Hidden reasoning tokens count toward this limit, so leave room beyond the visible answer.
