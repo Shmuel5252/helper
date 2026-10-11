@@ -1,0 +1,219 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --color-bubble: var(--bubble);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-heebo), system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf8;
+  --fg: #1d1c1a;
+  --muted: #6b6862;
+  --surface: #ffffff;
+  --bubble: #efede8;
+  --line: #e4e1db;
+  --code: #f3f1ec;
+  --accent: #0f766e;
+  --accent-fg: #ffffff;
+  --danger: #b42318;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171716;
+    --fg: #ecebe7;
+    --muted: #a3a09a;
+    --surface: #21211f;
+    --bubble: #2a2a27;
+    --line: #34332f;
+    --code: #1f1f1d;
+    --accent: #2dd4bf;
+    --accent-fg: #062320;
+    --danger: #f97066;
+  }
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+input,
+textarea {
+  font-size: 16px; /* below 16px iOS zooms into the field */
+}
+
+button {
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+/* Press feedback that works for touch and mouse alike. */
+.press:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.msg-in {
+  animation: msg-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.dots span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: dot 1.2s ease-in-out infinite;
+}
+.dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* Rendered Markdown in assistant answers. Logical properties only, so RTL and LTR both work. */
+.md > * + * {
+  margin-top: 0.85em;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  font-weight: 600;
+  line-height: 1.35;
+  margin-top: 1.4em;
+}
+.md h1 {
+  font-size: 1.3em;
+}
+.md h2 {
+  font-size: 1.18em;
+}
+.md h3,
+.md h4 {
+  font-size: 1.05em;
+}
+.md ul,
+.md ol {
+  padding-inline-start: 1.4em;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li + li,
+.md li > ul,
+.md li > ol {
+  margin-top: 0.35em;
+}
+.md li::marker {
+  color: var(--muted);
+}
+.md strong {
+  font-weight: 600;
+}
+.md a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md blockquote {
+  border-inline-start: 3px solid var(--line);
+  padding-inline-start: 1em;
+  color: var(--muted);
+}
+.md hr {
+  border-color: var(--line);
+}
+.md code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--code);
+  border-radius: 0.375rem;
+  padding: 0.1em 0.35em;
+}
+.md pre {
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: 0.875rem;
+  padding: 0.875rem 1rem;
+  overflow-x: auto;
+  text-align: left;
+  line-height: 1.55;
+}
+.md pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+.md table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+.md th,
+.md td {
+  border: 1px solid var(--line);
+  padding: 0.4em 0.75em;
+  text-align: start;
+}
