@@ -33,6 +33,7 @@
 | `AI_API_KEY` | כן | מפתח ה-API של הספק |
 | `AI_MODEL` | כן | מזהה המודל. הרשימה המלאה: `npm run models` |
 | `AI_BASE_URL` | לא | כתובת הממשק התואם OpenAI. ברירת מחדל: `https://integrate.api.nvidia.com/v1` |
+| `AI_REASONING_EFFORT` | לא | כמה המודל "חושב" לפני שהוא עונה: `none` / `low` / `medium` / `high`. ברירת מחדל: `none` (התשובה מתחילה הכי מהר). יותר חשיבה = התשובה מתחילה מאוחר יותר. אם הספק דוחה את הפרמטר, מגדירים ערך ריק |
 | `ACCESS_CODE` | כן | הקוד שמקלידים במסך הכניסה. כדאי לבחור קוד ארוך שקשה לנחש. שינוי הקוד מנתק את כל מי שמחובר |
 
 השמות הישנים (`NVIDIA_API_KEY`, `NVIDIA_MODEL`, `NVIDIA_BASE_URL`) עדיין עובדים: אם משתנה חדש חסר, האתר משתמש בשם הישן.
@@ -51,7 +52,7 @@ Gemini (דרך הממשק התואם OpenAI של Google):
 ```bash
 AI_API_KEY=...            # מפתח מ-Google AI Studio
 AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
-AI_MODEL=gemini-2.5-flash # או כל מודל אחר מ-npm run models
+AI_MODEL=gemini-3.6-flash # או כל מודל אחר מ-npm run models
 ```
 
 מודלים שמציגים "חשיבה" בתגיות `<think>…</think>` נתמכים: החלק הזה מסונן ולא מוצג.

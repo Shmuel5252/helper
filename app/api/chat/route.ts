@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { ReasoningEffort } from "openai/resources/shared";
 import { ERROR_MARK, prepareHistory } from "@/lib/chat";
 import { hebrewError } from "@/lib/errors";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
@@ -10,6 +11,9 @@ export const maxDuration = 60;
 const env = (name: string) => process.env[`AI_${name}`] || process.env[`NVIDIA_${name}`];
 const API_KEY = env("API_KEY");
 const MODEL = env("MODEL");
+// How long reasoning models think before answering (less = faster first token).
+// Set AI_REASONING_EFFORT to an empty value for providers that reject the parameter.
+const REASONING_EFFORT = (process.env.AI_REASONING_EFFORT ?? "none") as ReasoningEffort;
 
 const client = new OpenAI({
   apiKey: API_KEY ?? "missing",
@@ -40,7 +44,9 @@ export async function POST(request: Request) {
         messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
         stream: true,
         temperature: 0.6,
-        max_tokens: 2048,
+        // Hidden reasoning tokens count toward this limit, so leave room beyond the visible answer.
+        max_tokens: 8192,
+        ...(REASONING_EFFORT ? { reasoning_effort: REASONING_EFFORT } : {}),
       },
       { signal: request.signal },
     );
