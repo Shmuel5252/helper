@@ -2,13 +2,18 @@ import OpenAI from "openai";
 import { ERROR_MARK, prepareHistory } from "@/lib/chat";
 import { hebrewError } from "@/lib/errors";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
+import { createThinkFilter } from "@/lib/think";
 
 export const maxDuration = 60;
 
+// Provider-neutral names; the original NVIDIA_* names still work as a fallback.
+const env = (name: string) => process.env[`AI_${name}`] || process.env[`NVIDIA_${name}`];
+const API_KEY = env("API_KEY");
+const MODEL = env("MODEL");
+
 const client = new OpenAI({
-  apiKey: process.env.NVIDIA_API_KEY ?? "missing",
-  // NVIDIA_BASE_URL is only for local testing against a mock server.
-  baseURL: process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1",
+  apiKey: API_KEY ?? "missing",
+  baseURL: env("BASE_URL") || "https://integrate.api.nvidia.com/v1",
   timeout: 25_000, // until the first byte; with one retry this stays under maxDuration
   maxRetries: 1,
 });
@@ -22,8 +27,8 @@ export async function POST(request: Request) {
   const messages = prepareHistory(body?.messages);
   if (!messages) return errorResponse(400, "ההודעה ריקה או לא תקינה.");
 
-  const model = process.env.NVIDIA_MODEL;
-  if (!process.env.NVIDIA_API_KEY || !model) {
+  const model = MODEL;
+  if (!API_KEY || !model) {
     return errorResponse(500, "האתר עדיין לא הוגדר עד הסוף (חסר מפתח או מודל). פנו למנהל האתר.");
   }
 
@@ -41,21 +46,24 @@ export async function POST(request: Request) {
     );
   } catch (e) {
     if (request.signal.aborted) return new Response(null, { status: 499 });
-    console.error("NVIDIA request failed:", e);
+    console.error("AI request failed:", e);
     return errorResponse(502, hebrewError(e));
   }
 
   const enc = new TextEncoder();
   const out = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const think = createThinkFilter();
       try {
         for await (const chunk of stream) {
-          const text = chunk.choices[0]?.delta?.content;
+          const text = think.push(chunk.choices[0]?.delta?.content ?? "");
           if (text) controller.enqueue(enc.encode(text));
         }
+        const rest = think.flush();
+        if (rest) controller.enqueue(enc.encode(rest));
       } catch (e) {
         if (!request.signal.aborted) {
-          console.error("NVIDIA stream failed:", e);
+          console.error("AI stream failed:", e);
           controller.enqueue(enc.encode(ERROR_MARK + hebrewError(e)));
         }
       }

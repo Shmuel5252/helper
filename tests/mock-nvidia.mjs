@@ -1,8 +1,10 @@
 // Mock OpenAI-compatible server for local testing (no real NVIDIA key needed).
-// Run: node tests/mock-nvidia.mjs   then start the app with NVIDIA_BASE_URL=http://localhost:4010/v1
+// Run: node tests/mock-nvidia.mjs   then start the app with AI_BASE_URL=http://localhost:4010/v1
 import http from "node:http";
 
 const ANSWERS = {
+  // Reasoning-model style output; 6-char chunks split both tags across chunks.
+  חשיבה: "<think>The user wants a short answer. Let me reason step by step.</think>\n\nהנה התשובה, בלי החשיבה.",
   פסקה:
     "שלום! אני עוזר אישי שמדבר עברית. אפשר לשאול אותי כל שאלה, לבקש עזרה בניסוח הודעות, בתכנון טיולים או בהסבר של נושאים מסובכים במילים פשוטות. אני משתדל לענות בצורה ברורה וקצרה.",
   "סוף אנגלית":

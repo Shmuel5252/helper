@@ -1,6 +1,6 @@
 // End-to-end + RTL checks. Needs the app running against tests/mock-nvidia.mjs:
 //   node tests/mock-nvidia.mjs
-//   ACCESS_CODE=test-code-123 NVIDIA_API_KEY=mock NVIDIA_MODEL=mock NVIDIA_BASE_URL=http://localhost:4010/v1 npx next start -p 3100
+//   ACCESS_CODE=test-code-123 AI_API_KEY=mock AI_MODEL=mock AI_BASE_URL=http://localhost:4010/v1 npx next start -p 3100
 //   node tests/e2e.mjs            (CHROME_PATH=... to use an existing Chromium)
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
