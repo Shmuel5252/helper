@@ -7,6 +7,7 @@ import { ERROR_MARK, MAX_CHARS, MSG_GENERIC, prepareHistory } from "@/lib/chat";
 import { loadHistory, makeTitle, newId, saveHistory, type Conversation, type Msg } from "@/lib/history";
 import { IMAGE_ERRORS, MAX_BODY_BYTES, MAX_IMAGES } from "@/lib/images";
 import type { PublicModel } from "@/lib/models";
+import { loadExhausted, markExhausted, type Exhausted } from "@/lib/quota";
 import ModelPicker from "./ModelPicker";
 import Sidebar from "./Sidebar";
 
@@ -63,6 +64,10 @@ export default function Chat() {
   const [lastKey, setLastKey] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [viewer, setViewer] = useState<string | null>(null);
+  // Model groups whose daily quota ran out, until their reset time. `now` ticks once a minute.
+  const [exhausted, setExhausted] = useState<Exhausted>({});
+  const [now, setNow] = useState(0);
+  const [attention, setAttention] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const stickRef = useRef(true);
@@ -124,6 +129,9 @@ export default function Chat() {
     setConvs(h.conversations);
     setActiveId(h.activeId);
     setLastKey(getStorage()?.getItem(MODEL_KEY) ?? null);
+    const t = Date.now();
+    setNow(t);
+    setExhausted(loadExhausted(getStorage(), t));
     if (matchMedia("(pointer: fine)").matches) inputRef.current?.focus();
     fetch("/api/models")
       .then((r) => (r.ok ? r.json() : null))
@@ -153,6 +161,16 @@ export default function Chat() {
       setToast("האחסון מלא. מחקו כמה שיחות כדי שהשיחה תישמר.");
     }
   }, [convs, activeId, streaming]);
+
+  // Keep "renews in X hours" current, and drop badges once a quota resets.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const t = Date.now();
+      setNow(t);
+      setExhausted(loadExhausted(getStorage(), t));
+    }, 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -272,6 +290,13 @@ export default function Chat() {
       }
       if (!res.ok || !res.body) {
         const j = await res.json().catch(() => null);
+        // Daily quota used up: mark that model group in the picker. Never switch automatically.
+        if (typeof j?.quota?.group === "string" && typeof j.quota.resetAt === "number") {
+          const t = Date.now();
+          setNow(t);
+          setExhausted(markExhausted(getStorage(), j.quota.group, j.quota.resetAt, t));
+          if (j.quota.group === models?.find((m) => m.key === modelKey)?.group) setAttention((n) => n + 1);
+        }
         throw new Error(j?.error || MSG_GENERIC);
       }
 
@@ -369,7 +394,14 @@ export default function Chat() {
               </button>
               <h1 className="ps-2 pe-1 text-[17px] font-semibold tracking-tight">צ׳אט AI</h1>
               {models && models.length > 1 && (
-                <ModelPicker models={models} value={currentKey} onChange={chooseModel} />
+                <ModelPicker
+                  models={models}
+                  value={currentKey}
+                  onChange={chooseModel}
+                  exhausted={exhausted}
+                  now={now}
+                  attention={attention}
+                />
               )}
             </div>
             <button

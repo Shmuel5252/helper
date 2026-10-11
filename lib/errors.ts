@@ -1,8 +1,10 @@
 import { APIConnectionTimeoutError, APIError } from "openai";
 import { MSG_GENERIC } from "@/lib/chat";
+import { parseQuotaError } from "@/lib/quota";
 
 // Gemini reports which quota ran out; a per-day one won't recover in a minute.
-const isDailyQuota = (e: APIError) => /PerDay/i.test(JSON.stringify(e.error ?? "") + e.message);
+export const isDailyQuota = (e: unknown): e is APIError =>
+  e instanceof APIError && e.status === 429 && parseQuotaError(e.error, e.message).daily;
 
 // Maps an upstream AI-provider failure to a Hebrew message the user can act on.
 // `alternatives`: the picker has an option on a *different* model (quotas are per model),
@@ -10,9 +12,9 @@ const isDailyQuota = (e: APIError) => /PerDay/i.test(JSON.stringify(e.error ?? "
 export function hebrewError(e: unknown, { alternatives = false } = {}): string {
   if (e instanceof APIConnectionTimeoutError) return "השרת לא הגיב בזמן. נסו שוב.";
   if (e instanceof APIError) {
-    if (e.status === 429 && isDailyQuota(e))
+    if (isDailyQuota(e))
       return alternatives
-        ? "נגמרה המכסה היומית של האפשרות הזו. בחרו אפשרות אחרת בתפריט שלמעלה, או נסו שוב מחר."
+        ? "נגמרה המכסה היומית של האפשרות הזו. בחרו אפשרות אחרת מהרשימה למעלה, או נסו שוב מחר."
         : "נגמרה המכסה היומית של שירות ה-AI. נסו שוב מחר.";
     if (e.status === 429)
       return alternatives

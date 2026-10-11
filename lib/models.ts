@@ -20,7 +20,8 @@ export type ModelEntry = {
 };
 
 // What the browser may see: never the model id, key or base URL.
-export type PublicModel = Pick<ModelEntry, "key" | "label" | "description" | "vision">;
+// `group`: entries on the same model id share a provider quota; named after the first such entry.
+export type PublicModel = Pick<ModelEntry, "key" | "label" | "description" | "vision"> & { group: string };
 
 const KEY_RE = /^[a-z0-9_-]{1,32}$/i;
 
@@ -70,6 +71,16 @@ export function resolveModel(entries: ModelEntry[], key: unknown): ModelEntry | 
   return entries.find((e) => e.key === key) ?? entries[0];
 }
 
+export function quotaGroup(entries: ModelEntry[], entry: ModelEntry): string {
+  return entries.find((e) => e.model === entry.model)!.key;
+}
+
 export function publicModels(entries: ModelEntry[]): PublicModel[] {
-  return entries.map(({ key, label, description, vision }) => ({ key, label, description, vision }));
+  return entries.map((e) => ({
+    key: e.key,
+    label: e.label,
+    description: e.description,
+    vision: e.vision,
+    group: quotaGroup(entries, e),
+  }));
 }

@@ -1,9 +1,10 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { ERROR_MARK, prepareHistory, type ChatMessage } from "@/lib/chat";
-import { hebrewError } from "@/lib/errors";
+import { hebrewError, isDailyQuota } from "@/lib/errors";
+import { parseQuotaError, quotaResetAt } from "@/lib/quota";
 import { findImageError, IMAGE_ERRORS, MAX_BODY_BYTES } from "@/lib/images";
-import { resolveModel } from "@/lib/models";
+import { quotaGroup, resolveModel } from "@/lib/models";
 import { API_KEY, BASE_URL, MODELS } from "@/lib/serverConfig";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
 import { createThinkFilter } from "@/lib/think";
@@ -74,6 +75,17 @@ export async function POST(request: Request) {
   } catch (e) {
     if (request.signal.aborted) return new Response(null, { status: 499 });
     console.error("AI request failed:", e);
+    if (isDailyQuota(e)) {
+      // Tell the browser which quota group ran out and until when, so the picker can mark it.
+      const { retryMs } = parseQuotaError(e.error, e.message);
+      return Response.json(
+        {
+          error: hebrewError(e, errorOpts),
+          quota: { group: quotaGroup(MODELS, entry), resetAt: quotaResetAt(Date.now(), retryMs) },
+        },
+        { status: 429 },
+      );
+    }
     return errorResponse(502, hebrewError(e, errorOpts));
   }
 

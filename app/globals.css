@@ -11,6 +11,7 @@
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
   --color-danger: var(--danger);
+  --color-warn: var(--warn);
   --font-sans: var(--font-heebo), system-ui, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 }
@@ -28,6 +29,7 @@
   --accent: #0f766e;
   --accent-fg: #ffffff;
   --danger: #b42318;
+  --warn: #b45309;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -43,6 +45,7 @@
     --accent: #2dd4bf;
     --accent-fg: #062320;
     --danger: #f97066;
+    --warn: #fbbf24;
   }
 }
 
@@ -119,6 +122,21 @@ button:disabled {
 @media (min-width: 1024px) {
   .sheet-in {
     animation: fade-in 150ms ease-out backwards;
+  }
+}
+
+/* Draws the eye to the model picker when the current option's daily quota runs out. */
+.attention {
+  animation: attention 0.9s ease-in-out 3;
+}
+
+@keyframes attention {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 45%, transparent);
   }
 }
 

@@ -34,8 +34,16 @@ function chunk(content) {
   })}\n\n`;
 }
 
+// Models whose (simulated) daily quota ran out. GET /reset clears them between test runs.
+const exhaustedModels = new Set();
+
 http
   .createServer(async (req, res) => {
+    if (req.method === "GET" && req.url === "/reset") {
+      exhaustedModels.clear();
+      res.end("ok");
+      return;
+    }
     if (req.method !== "POST" || !req.url.endsWith("/chat/completions")) {
       res.writeHead(404).end();
       return;
@@ -54,18 +62,26 @@ http
       `[mock] model=${body.model} messages=${body.messages.length} images=${lastImages} last=${JSON.stringify(last.slice(0, 40))}`,
     );
 
-    if (last.includes("מכסה יומית")) {
-      // Shaped like Gemini's free-tier daily limit error.
+    // "מכסה יומית" exhausts this model's daily quota; like Gemini, every later request to the
+    // same model id fails too (until GET /reset).
+    if (last.includes("מכסה יומית")) exhaustedModels.add(body.model);
+    if (exhaustedModels.has(body.model)) {
+      // Shaped like Gemini's free-tier daily limit error, with a 2-hour retry delay.
       res.writeHead(429, { "Content-Type": "application/json" });
       res.end(
-        JSON.stringify({
-          error: {
-            code: 429,
-            message: "You exceeded your current quota. Quota exceeded for metric: free_tier_requests, limit: 20",
-            status: "RESOURCE_EXHAUSTED",
-            details: [{ violations: [{ quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier", quotaValue: "20" }] }],
+        JSON.stringify([
+          {
+            error: {
+              code: 429,
+              message: `You exceeded your current quota. Quota exceeded for metric: free_tier_requests, limit: 20, model: ${body.model}\nPlease retry in 2h0m0s.`,
+              status: "RESOURCE_EXHAUSTED",
+              details: [
+                { violations: [{ quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier", quotaValue: "20" }] },
+                { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "7200s" },
+              ],
+            },
           },
-        }),
+        ]),
       );
       return;
     }

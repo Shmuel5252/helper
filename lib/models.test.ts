@@ -87,6 +87,6 @@ test("allowlist: only known keys are honored, anything else gets the default", (
 
 test("public list never exposes model ids", () => {
   const pub = publicModels(parseModels(SUGGESTED, { effort: "none" }, quiet));
-  assert.deepEqual(Object.keys(pub[0]).sort(), ["description", "key", "label", "vision"]);
+  assert.deepEqual(Object.keys(pub[0]).sort(), ["description", "group", "key", "label", "vision"]);
   assert.ok(!JSON.stringify(pub).includes("gemini"));
 });

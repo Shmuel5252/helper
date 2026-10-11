@@ -13,6 +13,8 @@ const env = {
   AI_MODELS: [
     "fast|mock-fast|מהיר|לרוב השאלות|none|1",
     "deep|mock-deep|מעמיק|לשאלות מורכבות, איטי יותר|medium|1",
+    "deep2|mock-deep|יסודי|אותו מודל, חשיבה מלאה|high|1", // shares mock-deep's quota group
+
     "text|mock-text|טקסט בלבד|בלי תמונות|none|0",
   ].join(","),
 };

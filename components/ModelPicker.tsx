@@ -3,22 +3,31 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import type { PublicModel } from "@/lib/models";
+import { exhaustedLabel, isExhausted, type Exhausted } from "@/lib/quota";
 
 // Compact model selector for the chat header: a bottom sheet on mobile, a dropdown on desktop
-// (same markup, switched with lg: classes).
+// (same markup, switched with lg: classes). Options whose daily quota ran out get a badge but
+// stay selectable: the user decides.
 export default function ModelPicker({
   models,
   value,
   onChange,
+  exhausted,
+  now,
+  attention,
 }: {
   models: PublicModel[];
   value: string | undefined;
   onChange: (key: string) => void;
+  exhausted: Exhausted;
+  now: number;
+  attention: number; // bump to briefly highlight the button
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const current = models.find((m) => m.key === value) ?? models[0];
+  const currentOut = isExhausted(exhausted, current.group, now);
 
   useEffect(() => {
     if (!open) return;
@@ -57,11 +66,15 @@ export default function ModelPicker({
         onClick={() => setOpen(!open)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`בחירת מודל, כרגע: ${current.label}`}
-        className="press flex h-9 items-center gap-1 rounded-full ps-3 pe-2 text-[15px] font-medium text-muted transition-[background-color,color,transform] hover:bg-bubble hover:text-fg aria-expanded:bg-bubble aria-expanded:text-fg"
+        aria-label={`בחירת מודל, כרגע: ${current.label}${currentOut ? " (נגמרה המכסה היומית)" : ""}`}
+        data-exhausted={currentOut || undefined}
+        className="press relative flex h-9 items-center gap-1 rounded-full ps-3 pe-2 text-[15px] font-medium text-muted transition-[background-color,color,transform] hover:bg-bubble hover:text-fg aria-expanded:bg-bubble aria-expanded:text-fg"
       >
         {current.label}
+        {currentOut && <span aria-hidden className="ms-0.5 size-2 shrink-0 rounded-full bg-warn" />}
         <ChevronDown size={16} aria-hidden className="mt-px" />
+        {/* Re-mounted on every bump so the highlight replays. */}
+        {attention > 0 && <span key={attention} aria-hidden className="attention pointer-events-none absolute inset-0 rounded-full" />}
       </button>
 
       {open && (
@@ -72,11 +85,13 @@ export default function ModelPicker({
             role="menu"
             aria-label="בחירת מודל"
             onKeyDown={onKeyDown}
-            className="sheet-in fixed inset-x-0 bottom-0 z-50 rounded-t-3xl bg-surface p-2 pb-[max(env(safe-area-inset-bottom),0.75rem)] shadow-2xl lg:absolute lg:inset-x-auto lg:start-0 lg:top-full lg:bottom-auto lg:mt-1.5 lg:w-72 lg:rounded-2xl lg:border lg:border-line lg:p-1.5 lg:shadow-lg"
+            className="sheet-in fixed inset-x-0 bottom-0 z-50 rounded-t-3xl bg-surface p-2 pb-[max(env(safe-area-inset-bottom),0.75rem)] shadow-2xl lg:absolute lg:inset-x-auto lg:inset-s-0 lg:top-full lg:bottom-auto lg:mt-1.5 lg:w-72 lg:rounded-2xl lg:border lg:border-line lg:p-1.5 lg:shadow-lg"
           >
             <div aria-hidden className="mx-auto mt-1 mb-2 h-1 w-10 rounded-full bg-line lg:hidden" />
             <p className="px-3 pt-1 pb-1.5 text-[13px] font-medium text-muted">בחירת מודל</p>
-            {models.map((m) => (
+            {models.map((m) => {
+              const out = isExhausted(exhausted, m.group, now);
+              return (
               <button
                 key={m.key}
                 type="button"
@@ -89,8 +104,15 @@ export default function ModelPicker({
                 className="flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-start outline-none transition-colors hover:bg-bubble focus-visible:bg-bubble"
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block text-base leading-snug font-medium">{m.label}</span>
+                  <span className={`block text-base leading-snug font-medium ${out ? "text-muted" : ""}`}>{m.label}</span>
                   {m.description && <span className="block text-[14px] leading-snug text-muted">{m.description}</span>}
+                  {/* Part of the option's text, so screen readers hear it with the label. */}
+                  {out && (
+                    <span className="mt-1 flex items-center gap-1.5 text-[13px] leading-snug text-warn">
+                      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-warn" />
+                      {exhaustedLabel(exhausted[m.group], now)}
+                    </span>
+                  )}
                 </span>
                 <Check
                   size={18}
@@ -98,7 +120,8 @@ export default function ModelPicker({
                   className={`mt-0.5 shrink-0 text-accent ${m.key === current.key ? "" : "invisible"}`}
                 />
               </button>
-            ))}
+              );
+            })}
           </div>
         </>
       )}

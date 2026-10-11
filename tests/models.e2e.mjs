@@ -6,6 +6,7 @@ import fs from "node:fs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3101";
 const CODE = process.env.ACCESS_CODE ?? "test-code-123";
+const MOCK = process.env.MOCK_URL ?? "http://localhost:4010";
 const OUT = "test-screenshots";
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -85,6 +86,7 @@ for (const width of [375, 1280]) {
       if (mobile) await drawer.waitFor({ state: "hidden" });
     }
 
+    await fetch(`${MOCK}/reset`); // forget simulated daily-quota exhaustion from earlier runs
     await page.goto(BASE + "/login");
     await page.fill("#code", CODE);
     await page.click("button[type=submit]");
@@ -180,10 +182,10 @@ for (const width of [375, 1280]) {
           assert.equal(await ask(k), "model=mock-fast effort=none", `key ${k}`);
       });
 
-      await check(`[${tag}] /api/models exposes only key, label, description, vision`, async () => {
+      await check(`[${tag}] /api/models exposes only key, label, description, vision, group`, async () => {
         const j = await page.evaluate(() => fetch("/api/models").then((r) => r.json()));
-        assert.deepEqual(j.models.map((m) => m.key), ["fast", "deep", "text"]);
-        assert.deepEqual(Object.keys(j.models[0]).sort(), ["description", "key", "label", "vision"]);
+        assert.deepEqual(j.models.map((m) => m.key), ["fast", "deep", "deep2", "text"]);
+        assert.deepEqual(Object.keys(j.models[0]).sort(), ["description", "group", "key", "label", "vision"]);
         assert.ok(!JSON.stringify(j).includes("mock-"), "no model ids");
       });
 
