@@ -97,7 +97,59 @@ for (const width of [375, 1280]) {
       assert.equal(await current(), "מהיר");
     });
 
-    await check(`[${tag}] opens as ${mobile ? "bottom sheet" : "dropdown"}, current marked, keyboard + Escape`, async () => {
+    const sendBtn = page.getByRole("button", { name: "שליחה" });
+    // The chip is the send button's immediate neighbour (to its right in RTL), vertically centered.
+    const assertNextToSend = async () => {
+      const c = await trigger.boundingBox();
+      const s = await sendBtn.boundingBox();
+      const gap = c.x - (s.x + s.width);
+      assert.ok(gap >= 0 && gap <= 10, `gap between send and chip: ${gap}`);
+      assert.ok(Math.abs(c.y + c.height / 2 - (s.y + s.height / 2)) < 3, "chip centered with send");
+      return c;
+    };
+
+    await check(`[${tag}] chip lives in the composer next to send; the header has no picker`, async () => {
+      const c = await assertNextToSend();
+      const form = await page.locator("form").boundingBox();
+      assert.ok(c.y > form.y && c.y + c.height < form.y + form.height, "chip inside the composer");
+      assert.equal(await page.locator("header").getByRole("button", { name: /^בחירת מודל/ }).count(), 0);
+      const t = await textarea.boundingBox();
+      if (mobile) {
+        assert.ok(t.y + t.height <= c.y + 1, "textarea on its own row above the buttons");
+        assert.ok(t.width > 280, `textarea width ${t.width}`);
+      } else {
+        assert.ok(t.x >= c.x + c.width, "single row: textarea to the right of the chip");
+      }
+      await shot("composer-chip");
+    });
+
+    await check(`[${tag}] long text: textarea stays wide and capped at 6 lines, chip and send stay put`, async () => {
+      await textarea.fill(Array.from({ length: 12 }, (_, i) => `שורה ארוכה מספר ${i} עם עוד קצת טקסט`).join("\n"));
+      const t = await textarea.boundingBox();
+      assert.ok(t.height > 140 && t.height <= 161, `height ${t.height}`);
+      assert.ok(t.width > (mobile ? 280 : 500), `width ${t.width}`);
+      const c = await assertNextToSend();
+      assert.ok(c.y + c.height <= (mobile ? 812 : 860), "chip still on screen");
+      await shot("composer-long-text");
+      await textarea.fill("");
+    });
+
+    await check(`[${tag}] each option shows its model name, LTR inside the RTL row`, async () => {
+      await trigger.click();
+      await menu.waitFor();
+      const first = menu.getByRole("menuitemradio").first();
+      assert.match(await first.innerText(), /לרוב השאלות · Mock Fast/);
+      const name = first.locator('span[dir="ltr"]');
+      assert.equal(await name.innerText(), "Mock Fast");
+      assert.equal(await name.evaluate((e) => getComputedStyle(e).direction), "ltr");
+      assert.equal(await first.evaluate((e) => getComputedStyle(e).direction), "rtl");
+      const names = await menu.locator('[role=menuitemradio] span[dir="ltr"]').allInnerTexts();
+      assert.deepEqual(names, ["Mock Fast", "Mock Deep", "Mock Deep", "Mock Text"]);
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+    });
+
+    await check(`[${tag}] opens as ${mobile ? "bottom sheet" : "popover above the chip"}, current marked, keyboard + Escape`, async () => {
       await trigger.click();
       await menu.waitFor();
       await page.waitForTimeout(350); // let the slide-up / fade finish before measuring
@@ -106,7 +158,7 @@ for (const width of [375, 1280]) {
         assert.ok(Math.abs(box.y + box.height - 812) < 1 && box.width === width, `sheet ${JSON.stringify(box)}`);
       } else {
         const t = await trigger.boundingBox();
-        assert.ok(box.y >= t.y + t.height && Math.abs(box.x + box.width - (t.x + t.width)) < 2, "dropdown under trigger, right-aligned");
+        assert.ok(box.y + box.height <= t.y && Math.abs(box.x - t.x) < 2, `popover above the chip, aligned to its end (left) edge: ${JSON.stringify(box)} vs ${JSON.stringify(t)}`);
       }
       assert.equal(await menu.getByRole("menuitemradio", { checked: true }).innerText().then((s) => s.split("\n")[0]), "מהיר");
       const focused = () => page.evaluate(() => document.activeElement.textContent.trim().split(/\s{2,}|\n/)[0]);
@@ -127,16 +179,16 @@ for (const width of [375, 1280]) {
       assert.equal(await current(), "מעמיק");
       await send("איזה מודל ענה? שיחה ראשונה");
       assert.equal(await lastAnswer(), "model=mock-deep effort=medium");
-      assert.equal(await lastLabel(), "מעמיק");
+      assert.equal(await lastLabel(), "מעמיק · Mock Deep");
     });
 
     await check(`[${tag}] switching mid-conversation affects only the next message`, async () => {
       await pick("מהיר");
       await send("איזה מודל עכשיו?");
       assert.equal(await lastAnswer(), "model=mock-fast effort=none");
-      assert.equal(await lastLabel(), "מהיר");
+      assert.equal(await lastLabel(), "מהיר · Mock Fast");
       const labels = await page.locator('[title="המודל שענה"]').allInnerTexts();
-      assert.deepEqual(labels, ["מעמיק", "מהיר"]);
+      assert.deepEqual(labels, ["מעמיק · Mock Deep", "מהיר · Mock Fast"]);
       await shot("model-labels");
     });
 
@@ -185,7 +237,7 @@ for (const width of [375, 1280]) {
       await check(`[${tag}] /api/models exposes only key, label, description, vision, group`, async () => {
         const j = await page.evaluate(() => fetch("/api/models").then((r) => r.json()));
         assert.deepEqual(j.models.map((m) => m.key), ["fast", "deep", "deep2", "text"]);
-        assert.deepEqual(Object.keys(j.models[0]).sort(), ["description", "group", "key", "label", "vision"]);
+        assert.deepEqual(Object.keys(j.models[0]).sort(), ["description", "group", "key", "label", "modelName", "vision"]);
         assert.ok(!JSON.stringify(j).includes("mock-"), "no model ids");
       });
 
@@ -194,6 +246,23 @@ for (const width of [375, 1280]) {
         await send("בדיקת מכסה");
         const alert = page.locator(".msg-in").last().getByRole("alert");
         assert.match(await alert.innerText(), /חכו דקה.*אפשרות אחרת/);
+      });
+
+      await check(`[${tag}] with a single option there is no chip and the composer is one row`, async () => {
+        const OPEN = process.env.OPEN_URL ?? "http://localhost:3102"; // single-option instance, gate off
+        const up = await fetch(`${OPEN}/api/models`).then((r) => r.json(), () => null);
+        assert.ok(up?.models?.length === 1, `start it with: TEST_ACCESS_CODE= TEST_AI_MODELS='only|mock-fast|only||none|1' PORT=3102 node tests/start-test-app.mjs`);
+        const p2 = await ctx.newPage();
+        await p2.goto(`${OPEN}/`);
+        await p2.getByRole("heading", { name: "במה אפשר לעזור?" }).waitFor();
+        await p2.getByLabel("הודעה").waitFor();
+        await p2.waitForTimeout(500); // the model list loads after hydration
+        assert.equal(await p2.getByRole("button", { name: /^בחירת מודל/ }).count(), 0);
+        const t = await p2.getByLabel("הודעה").boundingBox();
+        const s = await p2.getByRole("button", { name: "שליחה" }).boundingBox();
+        assert.ok(Math.abs(t.y + t.height - (s.y + s.height)) < 6, "textarea and send share one row");
+        await p2.screenshot({ path: `${OUT}/composer-single-option-${tag}.png` });
+        await p2.close();
       });
 
       await check(`[${tag}] daily quota error says so, suggests another option or tomorrow`, async () => {

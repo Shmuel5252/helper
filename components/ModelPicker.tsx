@@ -68,11 +68,11 @@ export default function ModelPicker({
         aria-expanded={open}
         aria-label={`בחירת מודל, כרגע: ${current.label}${currentOut ? " (נגמרה המכסה היומית)" : ""}`}
         data-exhausted={currentOut || undefined}
-        className="press relative flex h-9 items-center gap-1 rounded-full ps-3 pe-2 text-[15px] font-medium text-muted transition-[background-color,color,transform] hover:bg-bubble hover:text-fg aria-expanded:bg-bubble aria-expanded:text-fg"
+        className="press relative flex h-8 max-w-28 items-center gap-1 rounded-full bg-bubble ps-2.5 pe-1.5 text-[14px] font-medium text-muted transition-[background-color,color,transform] hover:bg-line hover:text-fg aria-expanded:bg-line aria-expanded:text-fg"
       >
-        {current.label}
-        {currentOut && <span aria-hidden className="ms-0.5 size-2 shrink-0 rounded-full bg-warn" />}
-        <ChevronDown size={16} aria-hidden className="mt-px" />
+        <span className="truncate">{current.label}</span>
+        {currentOut && <span aria-hidden className="size-2 shrink-0 rounded-full bg-warn" />}
+        <ChevronDown size={15} aria-hidden className="mt-px shrink-0" />
         {/* Re-mounted on every bump so the highlight replays. */}
         {attention > 0 && <span key={attention} aria-hidden className="attention pointer-events-none absolute inset-0 rounded-full" />}
       </button>
@@ -85,7 +85,8 @@ export default function ModelPicker({
             role="menu"
             aria-label="בחירת מודל"
             onKeyDown={onKeyDown}
-            className="sheet-in fixed inset-x-0 bottom-0 z-50 rounded-t-3xl bg-surface p-2 pb-[max(env(safe-area-inset-bottom),0.75rem)] shadow-2xl lg:absolute lg:inset-x-auto lg:inset-s-0 lg:top-full lg:bottom-auto lg:mt-1.5 lg:w-72 lg:rounded-2xl lg:border lg:border-line lg:p-1.5 lg:shadow-lg"
+            // Mobile: bottom sheet. Desktop: popover opening upward from the chip, aligned to its end edge.
+            className="sheet-in fixed inset-x-0 bottom-0 z-50 rounded-t-3xl bg-surface p-2 pb-[max(env(safe-area-inset-bottom),0.75rem)] shadow-2xl lg:absolute lg:inset-x-auto lg:inset-e-0 lg:top-auto lg:bottom-full lg:mb-2 lg:w-80 lg:rounded-2xl lg:border lg:border-line lg:p-1.5 lg:shadow-lg"
           >
             <div aria-hidden className="mx-auto mt-1 mb-2 h-1 w-10 rounded-full bg-line lg:hidden" />
             <p className="px-3 pt-1 pb-1.5 text-[13px] font-medium text-muted">בחירת מודל</p>
@@ -105,7 +106,13 @@ export default function ModelPicker({
               >
                 <span className="min-w-0 flex-1">
                   <span className={`block text-base leading-snug font-medium ${out ? "text-muted" : ""}`}>{m.label}</span>
-                  {m.description && <span className="block text-[14px] leading-snug text-muted">{m.description}</span>}
+                  <span className="block text-[14px] leading-snug text-muted">
+                    {m.description && `${m.description} · `}
+                    {/* LTR island inside the RTL row, so "Gemini 3.6 Flash" reads correctly. */}
+                    <span dir="ltr" className="whitespace-nowrap">
+                      {m.modelName}
+                    </span>
+                  </span>
                   {/* Part of the option's text, so screen readers hear it with the label. */}
                   {out && (
                     <span className="mt-1 flex items-center gap-1.5 text-[13px] leading-snug text-warn">

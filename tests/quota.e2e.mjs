@@ -95,7 +95,7 @@ for (const width of [375, 1280]) {
     await check(`[${tag}] daily 429 on the current option: message points to the picker, no automatic switch`, async () => {
       await pick("מעמיק");
       await send("בדיקת מכסה יומית");
-      assert.match(await lastAlert(), /נגמרה המכסה היומית של האפשרות הזו\. בחרו אפשרות אחרת מהרשימה למעלה/);
+      assert.match(await lastAlert(), /נגמרה המכסה היומית של האפשרות הזו\. בחרו אפשרות אחרת בכפתור ליד השליחה/);
       assert.equal(await current(), "מעמיק", "still on the same option");
     });
 

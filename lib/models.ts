@@ -19,9 +19,26 @@ export type ModelEntry = {
   vision: boolean;
 };
 
-// What the browser may see: never the model id, key or base URL.
+// What the browser may see: never the raw model id, the API key or the base URL.
 // `group`: entries on the same model id share a provider quota; named after the first such entry.
-export type PublicModel = Pick<ModelEntry, "key" | "label" | "description" | "vision"> & { group: string };
+// `modelName`: a readable name for display only; requests still carry nothing but the entry key.
+export type PublicModel = Pick<ModelEntry, "key" | "label" | "description" | "vision"> & {
+  group: string;
+  modelName: string;
+};
+
+// "gemini-3.6-flash" → "Gemini 3.6 Flash", "gemini-3.5-flash-lite" → "Gemini 3.5 Flash-Lite",
+// "meta/llama-3.3-70b-instruct" → "Llama 3.3 70b-Instruct": words before the first version-like
+// part are the family, the version stays as is, and the words after it are the variant.
+export function displayName(modelId: string): string {
+  const parts = modelId.split("/").pop()!.split("-").filter(Boolean);
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const v = parts.findIndex((p) => /^\d/.test(p));
+  if (v <= 0) return parts.map(cap).join(" ");
+  return [parts.slice(0, v).map(cap).join(" "), parts[v], parts.slice(v + 1).map(cap).join("-")]
+    .filter(Boolean)
+    .join(" ");
+}
 
 const KEY_RE = /^[a-z0-9_-]{1,32}$/i;
 
@@ -82,5 +99,6 @@ export function publicModels(entries: ModelEntry[]): PublicModel[] {
     description: e.description,
     vision: e.vision,
     group: quotaGroup(entries, e),
+    modelName: displayName(e.model),
   }));
 }

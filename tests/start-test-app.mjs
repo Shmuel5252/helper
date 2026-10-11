@@ -10,7 +10,7 @@ const env = {
   AI_MODEL: "mock-model",
   AI_BASE_URL: "http://localhost:4010/v1",
   AI_REASONING_EFFORT: "none",
-  AI_MODELS: [
+  AI_MODELS: process.env.TEST_AI_MODELS ?? [
     "fast|mock-fast|מהיר|לרוב השאלות|none|1",
     "deep|mock-deep|מעמיק|לשאלות מורכבות, איטי יותר|medium|1",
     "deep2|mock-deep|יסודי|אותו מודל, חשיבה מלאה|high|1", // shares mock-deep's quota group

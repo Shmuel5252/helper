@@ -85,7 +85,9 @@ export default function Chat() {
   // on the server's list fall back silently to the default (first) option.
   const wantedKey = active ? active.modelKey : (lastKey ?? undefined);
   const currentKey = !models || models.some((m) => m.key === wantedKey) ? wantedKey : models[0]?.key;
-  const labelOf = (key?: string) => (models && models.length > 1 ? models.find((m) => m.key === key)?.label : undefined);
+  const showPicker = !!models && models.length > 1;
+  // The option that produced an answer (for the small label under it); only when there's a choice.
+  const answeredBy = (key?: string) => (showPicker ? models.find((m) => m.key === key) : undefined);
   // Images only for options that accept them; otherwise the attach button is hidden.
   const canAttach = !!models?.find((m) => m.key === currentKey)?.vision;
   const shown = canAttach ? attachments : []; // hidden (and not sent) for text-only options
@@ -375,8 +377,7 @@ export default function Chat() {
         />
 
       <div inert={modalDrawer} className="flex min-h-dvh min-w-0 flex-1 flex-col">
-        {/* z-20: above the sticky composer, so the model sheet's overlay covers it. */}
-        <header className="sticky top-0 z-20 bg-bg pt-[env(safe-area-inset-top)]">
+        <header className="sticky top-0 z-10 bg-bg pt-[env(safe-area-inset-top)]">
           <div className="mx-auto flex h-14 max-w-3xl items-center justify-between ps-2 pe-3">
             <div className="flex items-center gap-1">
               <button
@@ -392,17 +393,7 @@ export default function Chat() {
               >
                 <Menu size={21} aria-hidden />
               </button>
-              <h1 className="ps-2 pe-1 text-[17px] font-semibold tracking-tight">צ׳אט AI</h1>
-              {models && models.length > 1 && (
-                <ModelPicker
-                  models={models}
-                  value={currentKey}
-                  onChange={chooseModel}
-                  exhausted={exhausted}
-                  now={now}
-                  attention={attention}
-                />
-              )}
+              <h1 className="ps-2 text-[17px] font-semibold tracking-tight">צ׳אט AI</h1>
             </div>
             <button
               type="button"
@@ -485,9 +476,9 @@ export default function Chat() {
                     {m.content && !(streaming && i === last) && (
                       <div className="mt-1.5 flex items-center gap-1">
                         <CopyButton text={m.content} />
-                        {labelOf(m.modelKey) && (
+                        {answeredBy(m.modelKey) && (
                           <span className="text-[13px] text-muted" title="המודל שענה">
-                            {labelOf(m.modelKey)}
+                            {answeredBy(m.modelKey)!.label} · <span dir="ltr" className="whitespace-nowrap">{answeredBy(m.modelKey)!.modelName}</span>
                           </span>
                         )}
                       </div>
@@ -499,7 +490,8 @@ export default function Chat() {
           )}
         </main>
 
-        <div className="sticky bottom-0 z-10 bg-bg pb-[max(env(safe-area-inset-bottom),0.75rem)] before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-linear-to-t before:from-bg">
+        {/* z-20: above the header, so the model sheet's overlay covers it; below the history drawer. */}
+        <div className="sticky bottom-0 z-20 bg-bg pb-[max(env(safe-area-inset-bottom),0.75rem)] before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-linear-to-t before:from-bg">
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -530,7 +522,9 @@ export default function Chat() {
                   ))}
                 </div>
               )}
-              <div className="flex items-end gap-1.5">
+              {/* RTL order: attach · textarea · model chip · send. On narrow screens with the chip,
+                  the textarea takes its own row and the buttons sit in a row below it. */}
+              <div className="flex flex-wrap items-end gap-1.5">
               {canAttach && (
                 <button
                   type="button"
@@ -580,10 +574,23 @@ export default function Chat() {
                 }}
                 placeholder="שאלו כל דבר…"
                 aria-label="הודעה"
-                className={`max-h-40 min-w-0 flex-1 resize-none bg-transparent py-2 leading-6 outline-none placeholder:text-muted ${
-                  canAttach ? "ps-0.5" : "ps-2"
+                className={`max-h-40 min-w-0 resize-none bg-transparent py-2 leading-6 outline-none placeholder:text-muted ${
+                  showPicker
+                    ? `order-first w-full px-2 sm:order-0 sm:w-auto sm:flex-1 sm:pe-0 ${canAttach ? "sm:ps-0.5" : ""}`
+                    : `flex-1 ${canAttach ? "ps-0.5" : "ps-2"}`
                 }`}
               />
+              <div className="ms-auto flex shrink-0 items-center gap-1.5">
+              {showPicker && (
+                <ModelPicker
+                  models={models}
+                  value={currentKey}
+                  onChange={chooseModel}
+                  exhausted={exhausted}
+                  now={now}
+                  attention={attention}
+                />
+              )}
               {streaming ? (
                 <button
                   type="button"
@@ -605,6 +612,7 @@ export default function Chat() {
                   <ArrowUp size={20} strokeWidth={2.25} aria-hidden />
                 </button>
               )}
+              </div>
               </div>
             </div>
           </form>

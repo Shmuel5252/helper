@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseModels, publicModels, resolveModel } from "./models.ts";
+import { displayName, parseModels, publicModels, resolveModel } from "./models.ts";
 
 const SUGGESTED =
   "fast|gemini-3.6-flash|מהיר|לרוב השאלות|none|1,deep|gemini-3.6-flash|מעמיק|לשאלות מורכבות, איטי יותר|medium|1";
@@ -85,8 +85,19 @@ test("allowlist: only known keys are honored, anything else gets the default", (
   assert.equal(resolveModel([], "fast"), undefined);
 });
 
-test("public list never exposes model ids", () => {
+test("public list exposes a readable model name, never the raw id", () => {
   const pub = publicModels(parseModels(SUGGESTED, { effort: "none" }, quiet));
-  assert.deepEqual(Object.keys(pub[0]).sort(), ["description", "group", "key", "label", "vision"]);
-  assert.ok(!JSON.stringify(pub).includes("gemini"));
+  assert.deepEqual(Object.keys(pub[0]).sort(), ["description", "group", "key", "label", "modelName", "vision"]);
+  assert.deepEqual(pub.map((p) => p.modelName), ["Gemini 3.6 Flash", "Gemini 3.6 Flash"]);
+  assert.ok(!JSON.stringify(pub).includes("gemini-3.6-flash"));
+});
+
+test("display names derived from model ids", () => {
+  assert.equal(displayName("gemini-3.6-flash"), "Gemini 3.6 Flash");
+  assert.equal(displayName("gemini-3.5-flash-lite"), "Gemini 3.5 Flash-Lite");
+  assert.equal(displayName("gemini-3.1-flash-lite"), "Gemini 3.1 Flash-Lite");
+  assert.equal(displayName("models/gemini-3.8-flash"), "Gemini 3.8 Flash");
+  assert.equal(displayName("meta/llama-3.3-70b-instruct"), "Llama 3.3 70b-Instruct");
+  assert.equal(displayName("mock-deep"), "Mock Deep");
+  assert.equal(displayName("gpt-4o"), "Gpt 4o");
 });
