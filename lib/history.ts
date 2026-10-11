@@ -3,7 +3,12 @@
 // Layout: one versioned key, STORE_KEY = { v: 2, activeId, conversations: Conversation[] }.
 // The pre-history app kept a single Msg[] under LEGACY_KEY; loadHistory() migrates it.
 
-export type Msg = { role: "user" | "assistant"; content: string; error?: string };
+export type Msg = {
+  role: "user" | "assistant";
+  content: string;
+  error?: string;
+  modelKey?: string; // assistant: which model option answered
+};
 
 export type Conversation = {
   id: string;
@@ -12,6 +17,7 @@ export type Conversation = {
   updatedAt: number;
   pinned: boolean;
   messages: Msg[];
+  modelKey?: string; // model option for this conversation's next message
 };
 
 export type History = { activeId: string | null; conversations: Conversation[] };

@@ -13,7 +13,9 @@
     "models": "node --env-file-if-exists=.env.local scripts/listModels.ts",
     "mock:nvidia": "node tests/mock-nvidia.mjs",
     "e2e": "node tests/e2e.mjs",
-    "e2e:history": "node tests/history.e2e.mjs"
+    "e2e:history": "node tests/history.e2e.mjs",
+    "test:app": "node tests/start-test-app.mjs",
+    "e2e:models": "node tests/models.e2e.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.55.0",

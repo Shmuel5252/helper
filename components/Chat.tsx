@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { ArrowUp, Check, Copy, Menu, Square, SquarePen } from "lucide-react";
 import { ERROR_MARK, MAX_CHARS, MSG_GENERIC } from "@/lib/chat";
 import { loadHistory, makeTitle, newId, saveHistory, type Conversation, type Msg } from "@/lib/history";
+import type { PublicModel } from "@/lib/models";
+import ModelPicker from "./ModelPicker";
 import Sidebar from "./Sidebar";
 
 // Markdown is split into its own chunk so the page is ready to type before it loads.
@@ -29,6 +31,9 @@ function getStorage(): Storage | null {
   }
 }
 
+// The model option the user picked last; new conversations start with it.
+const MODEL_KEY = "ai-chat:model";
+
 const DESKTOP = "(min-width: 1024px)";
 const subscribeDesktop = (cb: () => void) => {
   const m = matchMedia(DESKTOP);
@@ -44,6 +49,8 @@ export default function Chat() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [models, setModels] = useState<PublicModel[] | null>(null);
+  const [lastKey, setLastKey] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const stickRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -56,14 +63,36 @@ export default function Chat() {
   const messages = active?.messages ?? NO_MESSAGES;
   const modalDrawer = drawerOpen && !isDesktop;
 
+  // This conversation's model option (new chat: the last one picked). Keys that are no longer
+  // on the server's list fall back silently to the default (first) option.
+  const wantedKey = active ? active.modelKey : (lastKey ?? undefined);
+  const currentKey = !models || models.some((m) => m.key === wantedKey) ? wantedKey : models[0]?.key;
+  const labelOf = (key?: string) => (models && models.length > 1 ? models.find((m) => m.key === key)?.label : undefined);
+
   useEffect(() => {
     // localStorage only exists in the browser, so history loads after hydration.
     const h = loadHistory(getStorage());
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setConvs(h.conversations);
     setActiveId(h.activeId);
+    setLastKey(getStorage()?.getItem(MODEL_KEY) ?? null);
     if (matchMedia("(pointer: fine)").matches) inputRef.current?.focus();
+    fetch("/api/models")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => Array.isArray(j?.models) && setModels(j.models))
+      .catch(() => {}); // no list: no picker, the server uses its default
   }, []);
+
+  function chooseModel(key: string) {
+    setLastKey(key);
+    try {
+      getStorage()?.setItem(MODEL_KEY, key);
+    } catch {
+      // not remembered across reloads; fine
+    }
+    // Mid-conversation: applies from the next message.
+    if (active) updateConv(active.id, (c) => ({ ...c, modelKey: key }));
+  }
 
   useEffect(() => {
     if (!convs || streaming) return;
@@ -137,10 +166,11 @@ export default function Chat() {
 
     const now = Date.now();
     const id = active?.id ?? newId();
+    const modelKey = currentKey;
     const history: Msg[] = [...messages, { role: "user", content: text }];
-    const withAnswer: Msg[] = [...history, { role: "assistant", content: "" }];
+    const withAnswer: Msg[] = [...history, { role: "assistant", content: "", modelKey }];
     if (active) {
-      updateConv(id, (c) => ({ ...c, updatedAt: now, messages: withAnswer }));
+      updateConv(id, (c) => ({ ...c, updatedAt: now, messages: withAnswer, modelKey }));
     } else {
       // A conversation only exists once its first message is sent.
       const c: Conversation = {
@@ -150,6 +180,7 @@ export default function Chat() {
         updatedAt: now,
         pinned: false,
         messages: withAnswer,
+        modelKey,
       };
       setConvs((cs) => cs && [c, ...cs]);
       setActiveId(id);
@@ -173,6 +204,7 @@ export default function Chat() {
           messages: history
             .filter((m) => m.content && !m.error)
             .map(({ role, content }) => ({ role, content })),
+          modelKey,
         }),
         signal: ctrl.signal,
       });
@@ -260,7 +292,8 @@ export default function Chat() {
         />
 
       <div inert={modalDrawer} className="flex min-h-dvh min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 bg-bg pt-[env(safe-area-inset-top)]">
+        {/* z-20: above the sticky composer, so the model sheet's overlay covers it. */}
+        <header className="sticky top-0 z-20 bg-bg pt-[env(safe-area-inset-top)]">
           <div className="mx-auto flex h-14 max-w-3xl items-center justify-between ps-2 pe-3">
             <div className="flex items-center gap-1">
               <button
@@ -276,7 +309,10 @@ export default function Chat() {
               >
                 <Menu size={21} aria-hidden />
               </button>
-              <h1 className="ps-2 text-[17px] font-semibold tracking-tight">צ׳אט AI</h1>
+              <h1 className="ps-2 pe-1 text-[17px] font-semibold tracking-tight">צ׳אט AI</h1>
+              {models && models.length > 1 && (
+                <ModelPicker models={models} value={currentKey} onChange={chooseModel} />
+              )}
             </div>
             <button
               type="button"
@@ -326,7 +362,7 @@ export default function Chat() {
                 ) : (
                   <div key={i} className="msg-in">
                     {m.content ? (
-                      <div dir="auto" className="break-words">
+                      <div dir="auto" className="wrap-break-word">
                         <Suspense fallback={<div className="whitespace-pre-wrap">{m.content}</div>}>
                           <Markdown text={m.content} />
                         </Suspense>
@@ -339,7 +375,16 @@ export default function Chat() {
                         {m.error}
                       </p>
                     )}
-                    {m.content && !(streaming && i === last) && <CopyButton text={m.content} />}
+                    {m.content && !(streaming && i === last) && (
+                      <div className="mt-1.5 flex items-center gap-1">
+                        <CopyButton text={m.content} />
+                        {labelOf(m.modelKey) && (
+                          <span className="text-[13px] text-muted" title="המודל שענה">
+                            {labelOf(m.modelKey)}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ),
               )}
@@ -447,7 +492,7 @@ function CopyButton({ text }: { text: string }) {
       onClick={copy}
       aria-label={copied ? "הועתק" : "העתקה"}
       title={copied ? "הועתק" : "העתקה"}
-      className="press -ms-2 mt-1.5 flex size-9 items-center justify-center rounded-full text-muted transition-[background-color,color,transform] hover:bg-bubble hover:text-fg"
+      className="press -ms-2 flex size-9 items-center justify-center rounded-full text-muted transition-[background-color,color,transform] hover:bg-bubble hover:text-fg"
     >
       {copied ? <Check size={17} aria-hidden /> : <Copy size={17} aria-hidden />}
     </button>

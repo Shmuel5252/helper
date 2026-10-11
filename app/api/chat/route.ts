@@ -1,23 +1,16 @@
 import OpenAI from "openai";
-import type { ReasoningEffort } from "openai/resources/shared";
 import { ERROR_MARK, prepareHistory } from "@/lib/chat";
 import { hebrewError } from "@/lib/errors";
+import { resolveModel } from "@/lib/models";
+import { API_KEY, BASE_URL, MODELS } from "@/lib/serverConfig";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
 import { createThinkFilter } from "@/lib/think";
 
 export const maxDuration = 60;
 
-// Provider-neutral names; the original NVIDIA_* names still work as a fallback.
-const env = (name: string) => process.env[`AI_${name}`] || process.env[`NVIDIA_${name}`];
-const API_KEY = env("API_KEY");
-const MODEL = env("MODEL");
-// How long reasoning models think before answering (less = faster first token).
-// Set AI_REASONING_EFFORT to an empty value for providers that reject the parameter.
-const REASONING_EFFORT = (process.env.AI_REASONING_EFFORT ?? "none") as ReasoningEffort;
-
 const client = new OpenAI({
   apiKey: API_KEY ?? "missing",
-  baseURL: env("BASE_URL") || "https://integrate.api.nvidia.com/v1",
+  baseURL: BASE_URL,
   timeout: 25_000, // until the first byte; with one retry this stays under maxDuration
   maxRetries: 1,
 });
@@ -31,29 +24,32 @@ export async function POST(request: Request) {
   const messages = prepareHistory(body?.messages);
   if (!messages) return errorResponse(400, "ההודעה ריקה או לא תקינה.");
 
-  const model = MODEL;
-  if (!API_KEY || !model) {
+  // Only allowlisted entries; an unknown key silently gets the default. Never a client model id.
+  const entry = resolveModel(MODELS, body?.modelKey);
+  if (!API_KEY || !entry) {
     return errorResponse(500, "האתר עדיין לא הוגדר עד הסוף (חסר מפתח או מודל). פנו למנהל האתר.");
   }
+  const errorOpts = { alternatives: MODELS.length > 1 };
 
   let stream;
   try {
     stream = await client.chat.completions.create(
       {
-        model,
+        model: entry.model,
         messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
         stream: true,
         temperature: 0.6,
         // Hidden reasoning tokens count toward this limit, so leave room beyond the visible answer.
         max_tokens: 8192,
-        ...(REASONING_EFFORT ? { reasoning_effort: REASONING_EFFORT } : {}),
+        // How long reasoning models think first (less = faster first token). "" = provider default.
+        ...(entry.effort ? { reasoning_effort: entry.effort } : {}),
       },
       { signal: request.signal },
     );
   } catch (e) {
     if (request.signal.aborted) return new Response(null, { status: 499 });
     console.error("AI request failed:", e);
-    return errorResponse(502, hebrewError(e));
+    return errorResponse(502, hebrewError(e, errorOpts));
   }
 
   const enc = new TextEncoder();
@@ -70,7 +66,7 @@ export async function POST(request: Request) {
       } catch (e) {
         if (!request.signal.aborted) {
           console.error("AI stream failed:", e);
-          controller.enqueue(enc.encode(ERROR_MARK + hebrewError(e)));
+          controller.enqueue(enc.encode(ERROR_MARK + hebrewError(e, errorOpts)));
         }
       }
       try {

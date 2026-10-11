@@ -1,0 +1,209 @@
+// Model-picker checks at 375px and 1280px, light and dark. Needs the mock server and
+// tests/start-test-app.mjs (app on :3101 with three test options). Run: node tests/models.e2e.mjs
+import { chromium } from "playwright";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const BASE = process.env.BASE_URL ?? "http://localhost:3101";
+const CODE = process.env.ACCESS_CODE ?? "test-code-123";
+const OUT = "test-screenshots";
+fs.mkdirSync(OUT, { recursive: true });
+
+const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH });
+const external = [];
+const results = [];
+let lastError = "";
+const check = async (name, fn) => {
+  try {
+    await fn();
+    results.push(`PASS  ${name}`);
+  } catch (e) {
+    lastError = e.message.split("\n").slice(0, 12).join("\n");
+    results.push(`FAIL  ${name}: ${e.message.split("\n")[0]}`);
+  }
+  console.log(results.at(-1));
+  if (process.env.VERBOSE && results.at(-1).startsWith("FAIL")) console.log(lastError);
+};
+
+for (const width of [375, 1280]) {
+  for (const scheme of ["light", "dark"]) {
+    const mobile = width < 1024;
+    const tag = `${width}-${scheme}`;
+    if (process.env.ONLY && process.env.ONLY !== tag) continue;
+    const ctx = await browser.newContext({
+      viewport: { width, height: mobile ? 812 : 860 },
+      deviceScaleFactor: 2,
+      isMobile: mobile,
+      hasTouch: mobile,
+      colorScheme: scheme,
+      locale: "he-IL",
+    });
+    ctx.setDefaultTimeout(8000);
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => console.log(`  pageerror [${tag}]: ${e.message}`));
+    page.on("request", (r) => {
+      if (!["localhost", "127.0.0.1"].includes(new URL(r.url()).hostname)) external.push(r.url());
+    });
+
+    const shot = async (name) => {
+      await page.waitForTimeout(350);
+      await page.screenshot({ path: `${OUT}/${name}-${tag}.png` });
+    };
+    const textarea = page.getByLabel("הודעה");
+    const trigger = page.getByRole("button", { name: /^בחירת מודל/ });
+    const menu = page.getByRole("menu", { name: "בחירת מודל" });
+    const current = async () => (await trigger.innerText()).trim();
+    const lastAnswer = () => page.locator(".msg-in").last().locator(".md").innerText();
+    const lastLabel = () => page.locator(".msg-in").last().locator('[title="המודל שענה"]').innerText();
+    const drawer = page.getByRole("dialog", { name: "היסטוריית שיחות" });
+    const nav = page.locator('nav[aria-label="שיחות קודמות"]');
+
+    async function send(text) {
+      await textarea.fill(text);
+      await page.getByRole("button", { name: "שליחה" }).click();
+      await page.getByRole("button", { name: "עצירה" }).waitFor({ state: "detached", timeout: 20000 });
+      await page.getByRole("button", { name: "שליחה" }).waitFor();
+    }
+    async function pick(label) {
+      await trigger.click();
+      await menu.waitFor();
+      await menu.getByRole("menuitemradio", { name: new RegExp(label) }).click();
+      await menu.waitFor({ state: "detached" });
+    }
+    async function newChat() {
+      if (mobile) {
+        await page.getByRole("button", { name: "היסטוריית שיחות" }).click();
+        await drawer.getByRole("button", { name: "שיחה חדשה" }).click();
+      } else {
+        await nav.locator("..").getByRole("button", { name: "שיחה חדשה" }).click();
+      }
+      await page.getByRole("heading", { name: "במה אפשר לעזור?" }).waitFor();
+    }
+    async function openConversation(title) {
+      if (mobile) await page.getByRole("button", { name: "היסטוריית שיחות" }).click();
+      await nav.locator("li").filter({ hasText: title }).getByRole("button").first().click();
+      if (mobile) await drawer.waitFor({ state: "hidden" });
+    }
+
+    await page.goto(BASE + "/login");
+    await page.fill("#code", CODE);
+    await page.click("button[type=submit]");
+    await page.waitForURL(BASE + "/");
+
+    await check(`[${tag}] picker shows the default option`, async () => {
+      await trigger.waitFor();
+      assert.equal(await current(), "מהיר");
+    });
+
+    await check(`[${tag}] opens as ${mobile ? "bottom sheet" : "dropdown"}, current marked, keyboard + Escape`, async () => {
+      await trigger.click();
+      await menu.waitFor();
+      await page.waitForTimeout(350); // let the slide-up / fade finish before measuring
+      const box = await menu.boundingBox();
+      if (mobile) {
+        assert.ok(Math.abs(box.y + box.height - 812) < 1 && box.width === width, `sheet ${JSON.stringify(box)}`);
+      } else {
+        const t = await trigger.boundingBox();
+        assert.ok(box.y >= t.y + t.height && Math.abs(box.x + box.width - (t.x + t.width)) < 2, "dropdown under trigger, right-aligned");
+      }
+      assert.equal(await menu.getByRole("menuitemradio", { checked: true }).innerText().then((s) => s.split("\n")[0]), "מהיר");
+      const focused = () => page.evaluate(() => document.activeElement.textContent.trim().split(/\s{2,}|\n/)[0]);
+      assert.match(await focused(), /^מהיר/);
+      await page.keyboard.press("ArrowDown");
+      assert.match(await focused(), /^מעמיק/);
+      await page.keyboard.press("ArrowUp");
+      await page.keyboard.press("ArrowUp");
+      assert.match(await focused(), /^טקסט בלבד/);
+      await shot("model-picker");
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+      assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-haspopup")), "menu");
+    });
+
+    await check(`[${tag}] choosing "מעמיק" sends that allowlisted entry; label under the answer`, async () => {
+      await pick("מעמיק");
+      assert.equal(await current(), "מעמיק");
+      await send("איזה מודל ענה? שיחה ראשונה");
+      assert.equal(await lastAnswer(), "model=mock-deep effort=medium");
+      assert.equal(await lastLabel(), "מעמיק");
+    });
+
+    await check(`[${tag}] switching mid-conversation affects only the next message`, async () => {
+      await pick("מהיר");
+      await send("איזה מודל עכשיו?");
+      assert.equal(await lastAnswer(), "model=mock-fast effort=none");
+      assert.equal(await lastLabel(), "מהיר");
+      const labels = await page.locator('[title="המודל שענה"]').allInnerTexts();
+      assert.deepEqual(labels, ["מעמיק", "מהיר"]);
+      await shot("model-labels");
+    });
+
+    await check(`[${tag}] reload keeps the conversation's option`, async () => {
+      await pick("מעמיק");
+      await page.reload();
+      await trigger.waitFor();
+      assert.equal(await current(), "מעמיק");
+    });
+
+    await check(`[${tag}] new chat uses the last chosen option; each conversation keeps its own`, async () => {
+      await newChat();
+      assert.equal(await current(), "מעמיק");
+      await pick("טקסט בלבד");
+      await send("איזה מודל בשיחה השנייה?");
+      assert.equal(await lastAnswer(), "model=mock-text effort=none");
+      await openConversation("איזה מודל ענה? שיחה ראשונה");
+      assert.equal(await current(), "מעמיק");
+      await newChat();
+      assert.equal(await current(), "טקסט בלבד");
+    });
+
+    await check(`[${tag}] removed/unknown remembered option falls back to the default`, async () => {
+      await page.evaluate(() => localStorage.setItem("ai-chat:model", "removed-option"));
+      await page.reload();
+      await trigger.waitFor();
+      assert.equal(await current(), "מהיר");
+    });
+
+    if (tag === "375-light") {
+      await check(`[${tag}] API: non-allowlisted key and raw model ids are ignored`, async () => {
+        const ask = (modelKey) =>
+          page.evaluate(async (modelKey) => {
+            const r = await fetch("/api/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ messages: [{ role: "user", content: "איזה מודל?" }], modelKey }),
+            });
+            return r.text();
+          }, modelKey);
+        assert.equal(await ask("deep"), "model=mock-deep effort=medium");
+        for (const k of ["mock-deep", "gemini-3.6-pro", "nope", null, 42])
+          assert.equal(await ask(k), "model=mock-fast effort=none", `key ${k}`);
+      });
+
+      await check(`[${tag}] /api/models exposes only key, label, description, vision`, async () => {
+        const j = await page.evaluate(() => fetch("/api/models").then((r) => r.json()));
+        assert.deepEqual(j.models.map((m) => m.key), ["fast", "deep", "text"]);
+        assert.deepEqual(Object.keys(j.models[0]).sort(), ["description", "key", "label", "vision"]);
+        assert.ok(!JSON.stringify(j).includes("mock-"), "no model ids");
+      });
+
+      await check(`[${tag}] rate limit error suggests waiting or another option`, async () => {
+        await newChat();
+        await send("בדיקת מכסה");
+        const alert = page.locator(".msg-in").last().getByRole("alert");
+        assert.match(await alert.innerText(), /חכו דקה.*אפשרות אחרת/);
+      });
+    }
+
+    await ctx.close();
+  }
+}
+
+results.push(
+  external.length
+    ? `FAIL  external requests: ${[...new Set(external)].join(", ")}`
+    : "PASS  zero requests to external domains",
+);
+await browser.close();
+console.log("\n" + results.join("\n"));
+process.exitCode = results.some((r) => r.startsWith("FAIL")) ? 1 : 0;

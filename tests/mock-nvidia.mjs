@@ -58,7 +58,10 @@ http
       ? LONG
       : last.includes("ניתוק")
         ? "התחלתי לענות ואז"
-        : (Object.entries(ANSWERS).find(([k]) => last.includes(k))?.[1] ?? `קיבלתי: ${last}`);
+        : last.includes("איזה מודל")
+          ? // Echo what the app actually sent upstream (model picker / allowlist tests).
+            `model=${body.model} effort=${body.reasoning_effort ?? "-"}`
+          : (Object.entries(ANSWERS).find(([k]) => last.includes(k))?.[1] ?? `קיבלתי: ${last}`);
 
     for (let i = 0; i < text.length; i += 6) {
       if (res.destroyed) return;

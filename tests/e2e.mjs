@@ -1,12 +1,12 @@
 // End-to-end + RTL checks. Needs the app running against tests/mock-nvidia.mjs:
 //   node tests/mock-nvidia.mjs
-//   ACCESS_CODE=test-code-123 AI_API_KEY=mock AI_MODEL=mock AI_BASE_URL=http://localhost:4010/v1 npx next start -p 3100
+//   node tests/start-test-app.mjs   (app on :3101)
 //   node tests/e2e.mjs            (CHROME_PATH=... to use an existing Chromium)
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-const BASE = process.env.BASE_URL ?? "http://localhost:3100";
+const BASE = process.env.BASE_URL ?? "http://localhost:3101";
 const CODE = process.env.ACCESS_CODE ?? "test-code-123";
 const OUT = "test-screenshots";
 fs.mkdirSync(OUT, { recursive: true });

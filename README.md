@@ -34,7 +34,23 @@
 | `AI_MODEL` | כן | מזהה המודל. הרשימה המלאה: `npm run models` |
 | `AI_BASE_URL` | לא | כתובת הממשק התואם OpenAI. ברירת מחדל: `https://integrate.api.nvidia.com/v1` |
 | `AI_REASONING_EFFORT` | לא | כמה המודל "חושב" לפני שהוא עונה: `none` / `low` / `medium` / `high`. ברירת מחדל: `none` (התשובה מתחילה הכי מהר). יותר חשיבה = התשובה מתחילה מאוחר יותר. אם הספק דוחה את הפרמטר, מגדירים ערך ריק |
+| `AI_MODELS` | לא | רשימת אפשרויות שהמשתמש בוחר מהן בראש הצ׳אט, לכל שיחה בנפרד (פירוט למטה). בלי המשתנה: אפשרות אחת לפי `AI_MODEL`, בלי בורר ובלי העלאת תמונות |
 | `ACCESS_CODE` | כן | הקוד שמקלידים במסך הכניסה. כדאי לבחור קוד ארוך שקשה לנחש. שינוי הקוד מנתק את כל מי שמחובר |
+
+### בורר מודלים (`AI_MODELS`)
+
+כל אפשרות היא שורה בפורמט `מפתח|מזהה מודל|שם בעברית|תיאור קצר|רמת חשיבה|תמונות`, ואפשרויות מופרדות בפסיק:
+
+- **מפתח:** מזהה קצר באנגלית (אותיות, ספרות, `-`, `_`). חייב להיות ייחודי.
+- **רמת חשיבה:** `none` / `low` / `medium` / `high`, או ריק כדי להשתמש ב-`AI_REASONING_EFFORT`.
+- **תמונות:** `1` אם המודל מקבל תמונות, `0` אם לא. כשהאפשרות לא תומכת בתמונות, כפתור הצירוף מוסתר.
+- האפשרות הראשונה היא ברירת המחדל. אותו מודל יכול להופיע כמה פעמים עם רמות חשיבה שונות.
+- מותר פסיק בתוך התיאור. שורה פגומה מדולגת (עם אזהרה בלוג של השרת).
+- הדפדפן מקבל רק את המפתח, השם, התיאור והאם יש תמונות. מזהה המודל, המפתח והכתובת נשארים בשרת, והשרת משתמש רק באפשרויות מהרשימה.
+
+```bash
+AI_MODELS=fast|gemini-3.6-flash|מהיר|לרוב השאלות|none|1,deep|gemini-3.6-flash|מעמיק|לשאלות מורכבות, איטי יותר|medium|1
+```
 
 השמות הישנים (`NVIDIA_API_KEY`, `NVIDIA_MODEL`, `NVIDIA_BASE_URL`) עדיין עובדים: אם משתנה חדש חסר, האתר משתמש בשם הישן.
 
@@ -60,26 +76,27 @@ AI_MODEL=gemini-3.6-flash # או כל מודל אחר מ-npm run models
 ## העלאה ל-Vercel
 
 1. מעלים את הפרויקט ל-GitHub ומייבאים אותו ב-Vercel (ההגדרות של Next.js מזוהות לבד).
-2. ב-**Settings ← Environment Variables** מוסיפים את המשתנים מהטבלה (`AI_API_KEY`, `AI_MODEL`, `ACCESS_CODE`, ולפי הצורך `AI_BASE_URL`) עבור Production.
+2. ב-**Settings ← Environment Variables** מוסיפים את המשתנים מהטבלה (`AI_API_KEY`, `AI_MODEL`, `ACCESS_CODE`, ולפי הצורך `AI_BASE_URL` ו-`AI_MODELS`) עבור Production.
 3. מבצעים Deploy. אם שיניתם משתנה אחרי ה-Deploy, צריך לבצע Redeploy כדי שהשינוי ייכנס לתוקף.
 
 ## בדיקות
 
 ```bash
-npm test            # בדיקות יחידה: קוד גישה, קיצור היסטוריה, אחסון שיחות, סינון <think>
+npm test            # בדיקות יחידה: קוד גישה, קיצור היסטוריה, אחסון שיחות, סינון <think>, בורר מודלים
 npm run typecheck   # בדיקת TypeScript
 npm run lint
 npm run build
 ```
 
-בדיקות דפדפן (Playwright) רצות מול שרת AI מדומה, כך שלא צריך מפתח אמיתי:
+בדיקות דפדפן (Playwright) רצות מול שרת AI מדומה, כך שלא צריך מפתח אמיתי. האפליקציה לבדיקות עולה בפורט 3101 עם שלוש אפשרויות מודל לדוגמה (ההגדרות ב-`tests/start-test-app.mjs`):
 
 ```bash
 npm run build
 npm run mock:nvidia      # בחלון נפרד
-ACCESS_CODE=test-code-123 AI_API_KEY=mock AI_MODEL=mock AI_BASE_URL=http://localhost:4010/v1 npx next start -p 3100   # בחלון נפרד
+npm run test:app         # בחלון נפרד
 npm run e2e          # צ׳אט ו-RTL
 npm run e2e:history  # רשימת השיחות
+npm run e2e:models   # בורר המודלים
 ```
 
 צילומי המסך נשמרים בתיקייה `test-screenshots/`. אם הדפדפן של Playwright לא מותקן, מריצים `npx playwright install chromium`, או מגדירים `CHROME_PATH` לנתיב של Chromium קיים.

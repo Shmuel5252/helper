@@ -1,10 +1,10 @@
 // Conversation-history checks at 375px and 1280px, light and dark. Same setup as tests/e2e.mjs
-// (app on :3100 against tests/mock-nvidia.mjs). Run: node tests/history.e2e.mjs
+// (app on :3101 via tests/start-test-app.mjs, against tests/mock-nvidia.mjs). Run: node tests/history.e2e.mjs
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-const BASE = process.env.BASE_URL ?? "http://localhost:3100";
+const BASE = process.env.BASE_URL ?? "http://localhost:3101";
 const CODE = process.env.ACCESS_CODE ?? "test-code-123";
 const OUT = "test-screenshots";
 fs.mkdirSync(OUT, { recursive: true });
@@ -61,7 +61,8 @@ for (const width of [375, 1280]) {
     const row = (title) => nav.locator("li").filter({ hasText: title });
     const sectionOf = (title) =>
       row(title).evaluate((li) => li.closest("section").querySelector("h3").textContent);
-    const lastAnswer = () => page.locator(".msg-in").last().innerText();
+    // Answer text only (not the copy button row / model label under it).
+    const lastAnswer = () => page.locator(".msg-in").last().locator(".md, .whitespace-pre-wrap").first().innerText();
     const idle = () => page.getByRole("button", { name: "שליחה" }).waitFor();
 
     async function send(text) {

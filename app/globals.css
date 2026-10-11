@@ -105,6 +105,23 @@ button:disabled {
   }
 }
 
+/* Model picker: slides up as a bottom sheet on mobile, fades in as a dropdown on desktop. */
+.sheet-in {
+  animation: sheet-in 260ms cubic-bezier(0.32, 0.72, 0, 1) backwards;
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@media (min-width: 1024px) {
+  .sheet-in {
+    animation: fade-in 150ms ease-out backwards;
+  }
+}
+
 /* History drawer: slides in from the inline-start edge (right in RTL).
    Visible immediately on open (so focus can move in); hidden only after the slide-out ends. */
 .drawer {
