@@ -17,7 +17,8 @@
     "test:app": "node tests/start-test-app.mjs",
     "e2e:models": "node tests/models.e2e.mjs",
     "e2e:images": "node tests/images.e2e.mjs",
-    "e2e:quota": "node tests/quota.e2e.mjs"
+    "e2e:quota": "node tests/quota.e2e.mjs",
+    "e2e:auth": "node tests/auth.e2e.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.55.0",

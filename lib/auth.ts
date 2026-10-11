@@ -1,7 +1,19 @@
 // Access-code auth. Uses Web Crypto so it runs in both the proxy and route handlers.
 
 export const COOKIE_NAME = "ai_chat_session";
-export const COOKIE_MAX_AGE = 60 * 60 * 24 * 90; // 90 days
+export const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 365 days
+
+export const SESSION_COOKIE = {
+  httpOnly: true,
+  secure: true,
+  sameSite: "lax" as const, // lets the magic link set it on a top-level navigation from another app
+  path: "/",
+  maxAge: COOKIE_MAX_AGE,
+};
+
+// Delay per wrong code: basic brute-force protection.
+// ponytail: fixed delay per wrong attempt; add per-IP rate limiting if the code ever gets guessed at scale.
+export const wrongCodeDelay = () => new Promise((r) => setTimeout(r, 1000));
 
 async function hmac(key: string, message: string): Promise<string> {
   const enc = new TextEncoder();

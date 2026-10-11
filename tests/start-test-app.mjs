@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 
 const env = {
   ...process.env,
-  ACCESS_CODE: "test-code-123",
+  ACCESS_CODE: process.env.TEST_ACCESS_CODE ?? "test-code-123", // TEST_ACCESS_CODE= (empty) runs with the gate off
   AI_API_KEY: "mock",
   AI_MODEL: "mock-model",
   AI_BASE_URL: "http://localhost:4010/v1",

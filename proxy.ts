@@ -1,20 +1,41 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { COOKIE_NAME, isValidSession } from "@/lib/auth";
+import { COOKIE_NAME, isValidCode, isValidSession, SESSION_COOKIE, sessionToken, wrongCodeDelay } from "@/lib/auth";
 
 export async function proxy(request: NextRequest) {
-  const ok = await isValidSession(
-    request.cookies.get(COOKIE_NAME)?.value,
-    process.env.ACCESS_CODE,
-  );
+  const code = process.env.ACCESS_CODE;
+  const url = request.nextUrl;
+  const isLogin = url.pathname === "/login";
+
+  // No ACCESS_CODE: the gate is deliberately off and the site is open.
+  if (!code) return isLogin ? NextResponse.redirect(new URL("/", request.url)) : NextResponse.next();
+
+  // Magic link: /?k=<ACCESS_CODE> logs in and drops the code from the address bar.
+  const k = url.searchParams.get("k");
+  if (k !== null) {
+    if (!(await isValidCode(k, code))) {
+      await wrongCodeDelay();
+      return NextResponse.redirect(new URL("/login?e=1", request.url));
+    }
+    const clean = url.clone();
+    clean.searchParams.delete("k");
+    if (isLogin) clean.pathname = "/";
+    const res = NextResponse.redirect(clean);
+    res.cookies.set(COOKIE_NAME, await sessionToken(code), SESSION_COOKIE);
+    return res;
+  }
+
+  const ok = await isValidSession(request.cookies.get(COOKIE_NAME)?.value, code);
+  if (isLogin) return ok ? NextResponse.redirect(new URL("/", request.url)) : NextResponse.next();
   if (ok) return NextResponse.next();
 
-  if (request.nextUrl.pathname.startsWith("/api/")) {
+  if (url.pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "נדרשת כניסה עם קוד גישה." }, { status: 401 });
   }
   return NextResponse.redirect(new URL("/login", request.url));
 }
 
 export const config = {
-  // Everything except the login page/endpoint, Next internals and static icons.
-  matcher: ["/((?!login|api/login|_next/static|_next/image|icon.svg).*)"],
+  // Everything except the login endpoint, Next internals and static icons.
+  // /login is included: it's skipped when the gate is off or the visitor is already in.
+  matcher: ["/((?!api/login|_next/static|_next/image|icon.svg).*)"],
 };

@@ -21,3 +21,9 @@ test("session cookie: token never equals the code and depends on it", async () =
   assert.equal(await isValidSession(undefined, "s3cret"), false);
   assert.equal(await isValidSession(token, undefined), false);
 });
+
+test("session cookie lasts 365 days and is httpOnly, secure, lax", async () => {
+  const { SESSION_COOKIE } = await import("./auth.ts");
+  assert.equal(SESSION_COOKIE.maxAge, 365 * 24 * 60 * 60);
+  assert.deepEqual([SESSION_COOKIE.httpOnly, SESSION_COOKIE.secure, SESSION_COOKIE.sameSite], [true, true, "lax"]);
+});
