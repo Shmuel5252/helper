@@ -1,0 +1,80 @@
+import OpenAI from "openai";
+import { ERROR_MARK, prepareHistory } from "@/lib/chat";
+import { hebrewError } from "@/lib/errors";
+import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
+
+export const maxDuration = 60;
+
+const client = new OpenAI({
+  apiKey: process.env.NVIDIA_API_KEY ?? "missing",
+  // NVIDIA_BASE_URL is only for local testing against a mock server.
+  baseURL: process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1",
+  timeout: 30_000,
+  maxRetries: 1,
+});
+
+function errorResponse(status: number, error: string) {
+  return Response.json({ error }, { status });
+}
+
+export async function POST(request: Request) {
+  const body = await request.json().catch(() => null);
+  const messages = prepareHistory(body?.messages);
+  if (!messages) return errorResponse(400, "ההודעה ריקה או לא תקינה.");
+
+  const model = process.env.NVIDIA_MODEL;
+  if (!process.env.NVIDIA_API_KEY || !model) {
+    return errorResponse(500, "האתר עדיין לא הוגדר עד הסוף (חסר מפתח או מודל). פנו למנהל האתר.");
+  }
+
+  let stream;
+  try {
+    stream = await client.chat.completions.create(
+      {
+        model,
+        messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
+        stream: true,
+        temperature: 0.6,
+        max_tokens: 2048,
+      },
+      { signal: request.signal },
+    );
+  } catch (e) {
+    if (request.signal.aborted) return new Response(null, { status: 499 });
+    console.error("NVIDIA request failed:", e);
+    return errorResponse(502, hebrewError(e));
+  }
+
+  const enc = new TextEncoder();
+  const out = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const chunk of stream) {
+          const text = chunk.choices[0]?.delta?.content;
+          if (text) controller.enqueue(enc.encode(text));
+        }
+      } catch (e) {
+        if (!request.signal.aborted) {
+          console.error("NVIDIA stream failed:", e);
+          controller.enqueue(enc.encode(ERROR_MARK + hebrewError(e)));
+        }
+      }
+      try {
+        controller.close();
+      } catch {
+        // already closed by a cancelled client
+      }
+    },
+    cancel() {
+      stream.controller.abort();
+    },
+  });
+
+  return new Response(out, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
