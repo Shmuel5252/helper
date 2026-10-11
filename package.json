@@ -10,7 +10,9 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --test \"lib/*.test.ts\"",
-    "models": "node --env-file-if-exists=.env.local scripts/listModels.ts"
+    "models": "node --env-file-if-exists=.env.local scripts/listModels.ts",
+    "mock:nvidia": "node tests/mock-nvidia.mjs",
+    "e2e": "node tests/e2e.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.55.0",

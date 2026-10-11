@@ -9,7 +9,7 @@ const client = new OpenAI({
   apiKey: process.env.NVIDIA_API_KEY ?? "missing",
   // NVIDIA_BASE_URL is only for local testing against a mock server.
   baseURL: process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1",
-  timeout: 30_000,
+  timeout: 25_000, // until the first byte; with one retry this stays under maxDuration
   maxRetries: 1,
 });
 
