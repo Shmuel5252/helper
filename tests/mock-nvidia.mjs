@@ -62,10 +62,8 @@ http
       `[mock] model=${body.model} messages=${body.messages.length} images=${lastImages} last=${JSON.stringify(last.slice(0, 40))}`,
     );
 
-    // "מכסה יומית" exhausts this model's daily quota; like Gemini, every later request to the
-    // same model id fails too (until GET /reset).
-    if (last.includes("מכסה יומית")) exhaustedModels.add(body.model);
-    if (exhaustedModels.has(body.model)) {
+    const enhancing = textOf(body.messages[0]).startsWith("You write prompts for");
+    const dailyQuota = () => {
       // Shaped like Gemini's free-tier daily limit error, with a 2-hour retry delay.
       res.writeHead(429, { "Content-Type": "application/json" });
       res.end(
@@ -73,7 +71,8 @@ http
           {
             error: {
               code: 429,
-              message: `You exceeded your current quota. Quota exceeded for metric: free_tier_requests, limit: 20, model: ${body.model}\nPlease retry in 2h0m0s.`,
+              message: `You exceeded your current quota. Quota exceeded for metric: free_tier_requests, limit: 20, model: ${body.model}
+Please retry in 2h0m0s.`,
               status: "RESOURCE_EXHAUSTED",
               details: [
                 { violations: [{ quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier", quotaValue: "20" }] },
@@ -83,8 +82,29 @@ http
           },
         ]),
       );
-      return;
+    };
+
+    // Prompt-enhancement scenarios (the test app translates with mock-text, then mock-deep, then mock-fast):
+    // "לאט" answers after 4.5 s; "מכסת ניסוח" = mock-text out of daily quota; "עומס" = mock-text
+    // never answers in time and mock-deep is overloaded (503); "כל המכסות" = every model out of quota.
+    if (enhancing) {
+      if (last.includes("לאט")) await sleep(4500);
+      if (last.includes("כל המכסות") || (last.includes("מכסת ניסוח") && body.model === "mock-text")) return dailyQuota();
+      if (last.includes("עומס") && body.model === "mock-text") {
+        await sleep(9000);
+        if (res.destroyed) return;
+      }
+      if (last.includes("עומס") && body.model === "mock-deep") {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { code: 503, message: "The model is overloaded due to high demand.", status: "UNAVAILABLE" } }));
+        return;
+      }
     }
+
+    // "מכסה יומית" exhausts this model's daily quota; like Gemini, every later request to the
+    // same model id fails too (until GET /reset).
+    if (last.includes("מכסה יומית")) exhaustedModels.add(body.model);
+    if (exhaustedModels.has(body.model)) return dailyQuota();
     if (last.includes("מכסה")) {
       res.writeHead(429, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: { message: "rate limited" } }));
@@ -95,9 +115,8 @@ http
     const slow = last.includes("ארוך");
     // Prompt enhancement for image/video (system prompt from lib/openart/enhance.ts): answers with a
     // preamble and quotes, like real models sometimes do, so the app's cleanup is exercised.
-    const enhancing = textOf(body.messages[0]).startsWith("You write prompts for");
     const text = enhancing
-      ? `<think>translate</think>Prompt: "EN(${textOf(body.messages[0]).includes("video") ? "video" : "image"}): ${last}"`
+      ? `<think>translate</think>Prompt: "EN(${textOf(body.messages[0]).includes("video") ? "video" : "image"}) ${body.model}: ${last}"`
       : slow
       ? LONG
       : last.includes("ניתוק")

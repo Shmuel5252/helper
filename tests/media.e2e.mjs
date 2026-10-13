@@ -45,6 +45,7 @@ async function connectOwner() {
 }
 
 await control({ reset: true });
+await fetch("http://localhost:4010/reset"); // no AI model left out of quota by other suites
 await fetch(`${KV}/__flush`, { method: "POST" });
 const adminCookie = await connectOwner();
 
@@ -114,7 +115,7 @@ for (const width of [375, 1280]) {
       assert.match(await info.innerText(), /הקישו שוב לאישור/);
       assert.equal(generateCalls.length, 0, "nothing spent on the first tap");
       // The chat model's English reading, cleaned of its preamble, quotes and <think>.
-      assert.equal(await understood.inputValue(), "EN(image): חתול כתום על ספה");
+      assert.equal(await understood.inputValue(), "EN(image) mock-text: חתול כתום על ספה");
       assert.equal(await understood.getAttribute("dir"), "auto");
       await shot("media-confirm");
       await textarea.fill("חתול כתום על ספה ירוקה");
@@ -230,20 +231,105 @@ for (const width of [375, 1280]) {
       assert.match(await page.locator(".msg-in").last().innerText(), /model=mock-fast/);
     });
 
+    await check(`[${tag}] slow translation looks alive: pending bubble, shimmer, spinner, "זה לוקח רגע…"`, async () => {
+      await radio("תמונה").click();
+      await textarea.fill("צב הולך לאט בגינה"); // "לאט": the mock answers after 4.5 s
+      await page.waitForFunction(() => /^15 קרדיטים/.test(document.querySelector("[data-testid=media-info]")?.textContent ?? ""));
+      const before = generateCalls.length;
+      await goButton.click();
+      const bubble = page.getByTestId("pending-prompt");
+      await bubble.waitFor({ timeout: 1000 });
+      assert.match(await bubble.innerText(), /צב הולך לאט בגינה[\s\S]*מנסחים…/);
+      assert.equal(await textarea.inputValue(), "צב הולך לאט בגינה", "composer keeps the text");
+      await page.getByTestId("interp-skeleton").waitFor({ timeout: 1000 });
+      assert.equal(await page.locator(".shimmer").first().evaluate((e) => getComputedStyle(e).animationName), "shimmer");
+      assert.equal(await goButton.getAttribute("aria-busy"), "true");
+      assert.equal(await goButton.locator("svg").getAttribute("class").then((c) => c.includes("animate-spin")), true);
+      // Busy, not faded (it may still be finishing the fade-in from when the text was typed).
+      await page.waitForFunction(() => getComputedStyle(document.querySelector("form button[type=submit]")).opacity === "1", null, { timeout: 1000 });
+      assert.equal(await goButton.evaluate((b) => b.className.includes("disabled:opacity")), false);
+      assert.equal(await page.getByText("זה לוקח רגע…").count(), 0, "not yet");
+      await page.getByText("זה לוקח רגע…").waitFor({ timeout: 4000 });
+      await shot("media-enhance-slow");
+      await understood.waitFor({ timeout: 10_000 });
+      assert.equal(await understood.inputValue(), "EN(image) mock-text: צב הולך לאט בגינה");
+      assert.equal(await page.getByText("זה לוקח רגע…").count(), 0);
+      assert.match(await bubble.innerText(), /ממתין לאישור/);
+      assert.equal(await goButton.getAttribute("aria-busy"), null);
+      assert.equal(await goButton.getAttribute("data-confirming"), "true", "armed as before: one more tap spends");
+      assert.equal(generateCalls.length, before);
+      await textarea.fill("");
+      assert.equal(await bubble.count(), 0, "cleared with the text");
+      await radio("צ׳אט").click();
+    });
+
     if (tag === "375-light") {
-      await check(`[${tag}] chat model unavailable: original prompt with a Hebrew note, nothing spent`, async () => {
-        await radio("תמונה").click();
-        await textarea.fill("מטוס על רקע מכסה עננים"); // "מכסה" makes the mock AI answer 429
+      // First tap on a new text → the reading shown in the box (and the note under it, if any).
+      async function readingOf(text) {
+        await textarea.fill(text);
         await page.waitForFunction(() => /^15 קרדיטים/.test(document.querySelector("[data-testid=media-info]")?.textContent ?? ""));
-        const before = generateCalls.length;
         await goButton.click();
-        await understood.waitFor();
-        assert.equal(await understood.inputValue(), "מטוס על רקע מכסה עננים");
-        await page.getByText("לא הצלחנו לנסח את הבקשה באנגלית, אז נשלח את התיאור כפי שכתבתם.").waitFor();
+        await understood.waitFor({ timeout: 25_000 });
+        await page.waitForFunction(() => document.querySelector("form button[type=submit]")?.dataset.confirming === "true");
+        return understood.inputValue();
+      }
+      const NOTE_TEMP = "שגיאה זמנית בניסוח, אז נשלח את התיאור כפי שכתבתם.";
+      const NOTE_QUOTA = "המכסה היומית לניסוח נגמרה, אז נשלח את התיאור כפי שכתבתם.";
+
+      await check(`[${tag}] translation: first model out of daily quota → the next one translates`, async () => {
+        await radio("תמונה").click();
+        assert.equal(await readingOf("מכסת ניסוח: ציפור על ענף"), "EN(image) mock-deep: מכסת ניסוח: ציפור על ענף");
+        assert.equal(await page.getByText(/אז נשלח את התיאור/).count(), 0, "no fallback note");
+      });
+
+      await check(`[${tag}] translation: timeout, then overload (503) → the third model translates`, async () => {
+        const t0 = Date.now();
+        assert.equal(await readingOf("עומס: ציפור על ענף"), "EN(image) mock-fast: עומס: ציפור על ענף");
+        assert.ok(Date.now() - t0 > 5500, "waited out the first model's attempt timeout");
+      });
+
+      await check(`[${tag}] translation: every model out of daily quota → original prompt, quota note`, async () => {
+        const before = generateCalls.length;
+        assert.equal(await readingOf("כל המכסות: מטוס מעל העננים"), "כל המכסות: מטוס מעל העננים");
+        await page.getByText(NOTE_QUOTA).waitFor();
+        assert.equal(generateCalls.length, before, "nothing spent");
+        await shot("media-enhance-quota");
+      });
+
+      await check(`[${tag}] translation: temporary error everywhere → original prompt, "temporary" note`, async () => {
+        assert.equal(await readingOf("מטוס על רקע מכסה עננים"), "מטוס על רקע מכסה עננים"); // "מכסה": 429 rate limit
+        await page.getByText(NOTE_TEMP).waitFor();
         assert.equal(await goButton.getAttribute("data-confirming"), "true", "still possible to go on");
-        assert.equal(generateCalls.length, before);
         await shot("media-enhance-fallback");
+      });
+
+      await check(`[${tag}] reduced motion: the skeleton and spinner stand still`, async () => {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await textarea.fill("צב הולך לאט בגינה");
+        await page.waitForFunction(() => /^15 קרדיטים/.test(document.querySelector("[data-testid=media-info]")?.textContent ?? ""));
+        await goButton.click();
+        const anim = await page.locator(".shimmer").first().evaluate((e) => getComputedStyle(e).animationDuration);
+        const spin = await goButton.locator("svg").evaluate((e) => getComputedStyle(e).animationDuration);
+        assert.equal(anim, "0.001s");
+        assert.equal(spin, "0.001s");
+        await understood.waitFor({ timeout: 15_000 });
+        await page.emulateMedia({ reducedMotion: "no-preference" });
         await textarea.fill("");
+      });
+
+      await check(`[${tag}] cancel before the job id arrives: stays stopped, resume follows it`, async () => {
+        await control({ generateDelayMs: 1500 });
+        await textarea.fill("ירח מעל הרים");
+        await page.waitForFunction(() => /^15 קרדיטים/.test(document.querySelector("[data-testid=media-info]")?.textContent ?? ""));
+        await confirmAndGo();
+        await waitCard("pending");
+        await lastCard().getByRole("button", { name: "ביטול" }).click(); // generate still in flight
+        await waitCard("stopped", 1000);
+        await page.waitForTimeout(2500); // the id has arrived meanwhile
+        assert.equal(await lastCard().getAttribute("data-media-status"), "stopped", "not followed after all");
+        await control({ generateDelayMs: 0 });
+        await lastCard().getByRole("button", { name: "המשך מעקב" }).click();
+        await waitCard("done", 15_000);
       });
 
       await check(`[${tag}] blocked prompt: Hebrew error in the card, credits returned`, async () => {

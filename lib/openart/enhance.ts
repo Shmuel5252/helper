@@ -45,3 +45,36 @@ export function cleanEnhanced(text: string): string {
 }
 
 export const ENHANCE_FALLBACK_NOTE = "לא הצלחנו לנסח את הבקשה באנגלית, אז נשלח את התיאור כפי שכתבתם.";
+
+// Which chat models translate, in order (AI_PROMPT_MODELS: AI_MODELS keys). The default tries the
+// options that don't share the main chat model's quota first. Unknown keys are skipped, and a
+// second key on an already-listed model id is skipped too (quotas and outages are per model).
+export const DEFAULT_PROMPT_MODELS = "alt,lite,fast";
+
+export function promptModels<T extends { key: string; model: string }>(entries: T[], raw: string | undefined): T[] {
+  const keys = (raw?.trim() ? raw : DEFAULT_PROMPT_MODELS).split(",").map((k) => k.trim());
+  const out: T[] = [];
+  for (const k of keys) {
+    const e = entries.find((x) => x.key === k);
+    if (e && !out.some((x) => x.model === e.model)) out.push(e);
+  }
+  return out.length ? out : entries.slice(0, 1); // none of them configured: the default option
+}
+
+// Why a translation attempt failed: "quota" = a per-day limit ran out; "temporary" = rate limit,
+// overload (5xx), timeout or network; "other" = anything else (bad key, unknown model...).
+export type FailureKind = "quota" | "temporary" | "other";
+
+const NOTES: Record<FailureKind, string> = {
+  quota: "המכסה היומית לניסוח נגמרה, אז נשלח את התיאור כפי שכתבתם.",
+  temporary: "שגיאה זמנית בניסוח, אז נשלח את התיאור כפי שכתבתם.",
+  other: ENHANCE_FALLBACK_NOTE,
+};
+
+// The note after every model failed: quota only when all of them ran out for the day.
+export function fallbackReason(kinds: FailureKind[]): FailureKind {
+  if (kinds.length && kinds.every((k) => k === "quota")) return "quota";
+  return kinds.includes("temporary") ? "temporary" : "other";
+}
+
+export const fallbackNote = (reason: FailureKind) => NOTES[reason];

@@ -2,7 +2,7 @@
 
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUp, Check, Copy, ImagePlus, Menu, Square, SquarePen, X } from "lucide-react";
+import { ArrowUp, Check, Copy, ImagePlus, LoaderCircle, Menu, Square, SquarePen, X } from "lucide-react";
 import { ERROR_MARK, MAX_CHARS, MSG_GENERIC, prepareHistory } from "@/lib/chat";
 import { loadHistory, makeTitle, mediaAsText, newId, saveHistory, type Conversation, type MediaResult, type Msg } from "@/lib/history";
 import { IMAGE_ERRORS, MAX_BODY_BYTES, MAX_IMAGES } from "@/lib/images";
@@ -96,6 +96,7 @@ export default function Chat() {
   // The request as the chat model understood it (English, editable), for one (mode, image?, text).
   const [interp, setInterp] = useState<{ sig: string; text: string; note?: string } | null>(null);
   const [interpLoading, setInterpLoading] = useState<string | null>(null);
+  const [slowFor, setSlowFor] = useState<string | null>(null); // the reading that passed ~3 s
   const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const stickRef = useRef(true);
@@ -143,6 +144,10 @@ export default function Chat() {
   const interpSig = mediaMode ? `${mode}|${refImage ? 1 : 0}|${mediaPrompt}` : null;
   const ip = interp && interp.sig === interpSig ? interp : null;
   const interpreting = !!interpSig && interpLoading === interpSig;
+  const interpSlow = interpreting && slowFor === interpSig;
+  // While the request is being read and until it's confirmed, it shows in the conversation as a
+  // pending bubble; the composer keeps the text so it can still be changed.
+  const pendingPrompt = mediaMode && (interpreting || !!ip) ? input.trim() || mediaPrompt : "";
   const confirming = canGenerate && confirmFor === confirmSig && !!ip;
   const mediaInfo = !mediaCfg?.available
     ? MSG_MEDIA_UNAVAILABLE
@@ -158,6 +163,13 @@ export default function Chat() {
   const mediaInfoWarn = !mediaCfg?.available || !!q?.error || q?.affordable === false || overCap;
   // Narrow screens: the textarea gets its own row whenever the buttons row would be crowded.
   const twoRow = showPicker || !!mediaCfg?.configured;
+
+  useEffect(() => {
+    if (!interpreting) return;
+    const sig = interpSig;
+    const t = setTimeout(() => setSlowFor(sig), 3000);
+    return () => clearTimeout(t);
+  }, [interpreting, interpSig]);
 
   useEffect(() => {
     if (!quoteSig) return;
@@ -322,9 +334,12 @@ export default function Chat() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  // Also when the pending bubble appears and when its reading arrives (the composer grows).
+  const hasPending = !!pendingPrompt;
+  const hasReading = !!ip;
   useEffect(() => {
     if (stickRef.current) window.scrollTo({ top: document.documentElement.scrollHeight });
-  }, [messages]);
+  }, [messages, hasPending, hasReading]);
 
   // Auto-grow the textarea; CSS max-height caps it at 6 lines.
   useEffect(() => {
@@ -333,6 +348,15 @@ export default function Chat() {
     ta.style.height = "auto";
     ta.style.height = `${ta.scrollHeight}px`;
   }, [input]);
+
+  // Cancel/resume before the job id arrived: by position. The id patched in later keeps the
+  // status, and polling only follows "pending" cards.
+  const setMediaStatusAt = (index: number, status: "stopped" | "pending") =>
+    activeId &&
+    updateConv(activeId, (c) => ({
+      ...c,
+      messages: c.messages.map((m, i) => (i === index && m.media ? { ...m, media: { ...m.media, status } } : m)),
+    }));
 
   const updateConv = (id: string, fn: (c: Conversation) => Conversation) =>
     setConvs((cs) => cs && cs.map((c) => (c.id === id ? fn(c) : c)));
@@ -625,7 +649,7 @@ export default function Chat() {
         </header>
 
         <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 sm:px-6">
-          {convs && messages.length === 0 && (
+          {convs && messages.length === 0 && !pendingPrompt && (
             <div className="my-auto py-10">
               <h2 className="mb-6 text-[26px] font-semibold tracking-tight">
                 {mode === "image" ? "איזו תמונה ליצור?" : mode === "video" ? "איזה סרטון ליצור?" : "במה אפשר לעזור?"}
@@ -645,7 +669,7 @@ export default function Chat() {
             </div>
           )}
 
-          {messages.length > 0 && (
+          {(messages.length > 0 || !!pendingPrompt) && (
             <div key={activeId} className="space-y-7 pt-3 pb-8" aria-live="polite">
               {messages.map((m, i) =>
                 m.role === "user" ? (
@@ -682,8 +706,8 @@ export default function Chat() {
                         onView={setViewer}
                         onToVideo={(url) => takeAsReference(url, "video")}
                         onEdit={(url) => takeAsReference(url, "image")}
-                        onStop={() => m.media?.jobId && polling.stop(m.media.jobId)}
-                        onResume={() => m.media?.jobId && polling.resume(m.media.jobId)}
+                        onStop={() => (m.media?.jobId ? polling.stop(m.media.jobId) : setMediaStatusAt(i, "stopped"))}
+                        onResume={() => (m.media?.jobId ? polling.resume(m.media.jobId) : setMediaStatusAt(i, "pending"))}
                       />
                     ) : m.content ? (
                       <div dir="auto" className="wrap-break-word">
@@ -711,6 +735,17 @@ export default function Chat() {
                     )}
                   </div>
                 ),
+              )}
+              {pendingPrompt && (
+                <div data-testid="pending-prompt" className="msg-in flex flex-col items-start gap-1">
+                  <div
+                    dir="auto"
+                    className="max-w-[85%] rounded-3xl border border-dashed border-muted/40 bg-bubble/60 px-4 py-2.5 wrap-break-word whitespace-pre-wrap text-fg/80"
+                  >
+                    {pendingPrompt}
+                  </div>
+                  <span className="px-2 text-[12px] text-muted">{interpreting ? "מנסחים…" : "ממתין לאישור"}</span>
+                </div>
               )}
             </div>
           )}
@@ -780,10 +815,18 @@ export default function Chat() {
                       className="mt-1 block w-full resize-none rounded-xl bg-bubble px-3 py-2 text-[14px] leading-5 outline-none focus-visible:ring-2 focus-visible:ring-accent"
                     />
                   ) : (
-                    <p role="status" className="mt-1 text-[14px] text-muted">
-                      מנסחים את הבקשה…
-                    </p>
+                    <div role="status" data-testid="interp-skeleton" className="mt-1 rounded-xl bg-bubble px-3 py-2.5">
+                      <span className="sr-only">מנסחים את הבקשה…</span>
+                      <div aria-hidden className="space-y-2">
+                        <div className="shimmer h-3 w-11/12 rounded-full" />
+                        <div className="shimmer h-3 w-3/4 rounded-full" />
+                      </div>
+                      <p aria-hidden className="mt-2 text-[13px] text-muted">
+                        מנסחים את הבקשה…
+                      </p>
+                    </div>
                   )}
+                  {interpSlow && <p className="mt-1 text-[13px] text-muted">זה לוקח רגע…</p>}
                   {ip?.note && <p className="mt-1 text-[13px] text-warn">{ip.note}</p>}
                 </div>
               )}
@@ -897,11 +940,18 @@ export default function Chat() {
                   aria-label={confirming ? `אישור: יצירה ב-${q?.credits} קרדיטים` : `יצירה · ${q?.credits ?? "…"} קרדיטים`}
                   title={confirming ? "הקישו לאישור" : "יצירה"}
                   data-confirming={confirming || undefined}
-                  className={`press flex h-10 shrink-0 items-center gap-1 rounded-full ps-2.5 pe-3 text-[15px] font-semibold transition-[background-color,color,opacity,transform] disabled:opacity-30 ${
+                  aria-busy={interpreting || undefined}
+                  className={`press flex h-10 shrink-0 items-center gap-1 rounded-full ps-2.5 pe-3 text-[15px] font-semibold transition-[background-color,color,opacity,transform] ${interpreting ? "cursor-progress" : "disabled:opacity-30"} ${
                     confirming ? "bg-fg text-bg" : "bg-accent text-accent-fg"
                   }`}
                 >
-                  {confirming ? <Check size={18} strokeWidth={2.5} aria-hidden /> : <ArrowUp size={18} strokeWidth={2.25} aria-hidden />}
+                  {interpreting ? (
+                    <LoaderCircle size={18} strokeWidth={2.5} aria-hidden className="animate-spin" />
+                  ) : confirming ? (
+                    <Check size={18} strokeWidth={2.5} aria-hidden />
+                  ) : (
+                    <ArrowUp size={18} strokeWidth={2.25} aria-hidden />
+                  )}
                   <span dir="ltr">{q?.credits ?? "…"}</span>
                 </button>
               ) : (

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decrypt, encrypt } from "./crypto.ts";
 import { accountSummary } from "./account.ts";
-import { cleanEnhanced, enhanceSystemPrompt } from "./enhance.ts";
+import { cleanEnhanced, enhanceSystemPrompt, fallbackNote, fallbackReason, promptModels } from "./enhance.ts";
 import { israelDay } from "./day.ts";
 
 const KEY = Buffer.alloc(32, 7).toString("base64");
@@ -53,4 +53,30 @@ test("prompt enhancement: system prompt per task, literal reading, cleaned answe
   assert.equal(cleanEnhanced("<think>never closed"), "");
   assert.equal(cleanEnhanced("   "), "");
   assert.equal(cleanEnhanced("x".repeat(3000)).length, 1000);
+});
+
+test("translation models: AI_PROMPT_MODELS order, unknown keys and shared model ids skipped", () => {
+  const entries = [
+    { key: "fast", model: "gemini-flash" },
+    { key: "deep", model: "gemini-pro" },
+    { key: "deep2", model: "gemini-pro" },
+    { key: "lite", model: "gemini-flash-lite" },
+    { key: "alt", model: "gemma" },
+  ];
+  const keys = (raw?: string) => promptModels(entries, raw).map((e) => e.key);
+  assert.deepEqual(keys(undefined), ["alt", "lite", "fast"], "default: models off the main chat quota first");
+  assert.deepEqual(keys(""), ["alt", "lite", "fast"]);
+  assert.deepEqual(keys(" deep , deep2,nope, fast"), ["deep", "fast"]);
+  assert.deepEqual(keys("nope"), ["fast"], "nothing usable: the default option");
+  assert.deepEqual(promptModels([], "alt"), []);
+});
+
+test("fallback note says why: daily quota only when every model ran out", () => {
+  assert.equal(fallbackReason(["quota", "quota"]), "quota");
+  assert.equal(fallbackReason(["quota", "temporary"]), "temporary");
+  assert.equal(fallbackReason(["other", "temporary"]), "temporary");
+  assert.equal(fallbackReason(["other"]), "other");
+  assert.equal(fallbackReason([]), "other", "no key / no models");
+  assert.match(fallbackNote("quota"), /^המכסה היומית לניסוח נגמרה/);
+  assert.match(fallbackNote("temporary"), /^שגיאה זמנית בניסוח/);
 });

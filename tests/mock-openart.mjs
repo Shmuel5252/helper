@@ -35,6 +35,7 @@ const initial = () => ({
   costMultiplier: 1,
   tokenTtlMs: 3_600_000,
   refreshDelayMs: 0,
+  generateDelayMs: 0, // slow generate_* answer (the job id arrives late)
   failRefresh: false,
   generateError: null, // e.g. "Insufficient credits"
   jobs: new Map(), // historyId -> job
@@ -148,6 +149,7 @@ async function mcp(req, res) {
   let result;
   try {
     if (!TOOLS[name]) throw new Error(`unknown tool ${name}`);
+    if (S.generateDelayMs && name.startsWith("openart_generate_")) await sleep(S.generateDelayMs);
     const data = TOOLS[name](args ?? {});
     result = { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data };
   } catch (e) {
@@ -264,7 +266,7 @@ http
         const c = JSON.parse((await readBody(req)).toString() || "{}");
         if (c.reset) S = initial();
         if (c.expireAccessTokens) for (const a of S.access.values()) a.expiresAt = 0;
-        for (const k of ["costMultiplier", "tokenTtlMs", "refreshDelayMs", "failRefresh", "generateError", "balance"]) if (k in c) S[k] = c[k];
+        for (const k of ["costMultiplier", "tokenTtlMs", "refreshDelayMs", "generateDelayMs", "failRefresh", "generateError", "balance"]) if (k in c) S[k] = c[k];
         return json(res, 200, { ok: true });
       }
       if (u.pathname === "/__state")
