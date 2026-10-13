@@ -7,6 +7,7 @@ import { ERROR_MARK, MAX_CHARS, MSG_GENERIC, prepareHistory } from "@/lib/chat";
 import { loadHistory, makeTitle, mediaAsText, newId, saveHistory, type Conversation, type MediaResult, type Msg } from "@/lib/history";
 import { IMAGE_ERRORS, MAX_BODY_BYTES, MAX_IMAGES } from "@/lib/images";
 import type { PublicModel } from "@/lib/models";
+import { ENHANCE_FALLBACK_NOTE } from "@/lib/openart/enhance";
 import type { PublicMediaOption } from "@/lib/openart/media-config";
 import { loadExhausted, markExhausted, type Exhausted } from "@/lib/quota";
 import MediaCard from "./MediaCard";
@@ -28,9 +29,9 @@ const MSG_IMAGE_FAILED = "לא הצלחנו לעבד את התמונה. נסו �
 type Attachment = { id: string; thumb?: string; full?: string };
 
 // OpenArt generation (image/video), from /api/media/config.
-type Usage = { spent: number; cap: number; remaining: number };
+type Usage = { spent: number; cap: number | null; remaining: number | null }; // cap null = no daily limit
 type MediaConfig = { configured: boolean; available: boolean; image: PublicMediaOption[]; video: PublicMediaOption[]; usage: Usage | null };
-type Quote = { sig: string; credits?: number; remaining?: number; cap?: number; affordable?: boolean; error?: string };
+type Quote = { sig: string; credits?: number; remaining?: number | null; cap?: number | null; affordable?: boolean; error?: string };
 const MSG_MEDIA_UNAVAILABLE = "יצירת תמונות וסרטונים לא זמינה כרגע.";
 const DEFAULT_ANIMATE_PROMPT = "הנפש את התמונה בתנועה טבעית";
 const PLACEHOLDERS: Record<Mode, string> = { chat: "שאלו כל דבר…", image: "תארו את התמונה…", video: "תארו את הסרטון…" };
@@ -92,6 +93,9 @@ export default function Chat() {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteNonce, setQuoteNonce] = useState(0);
   const [confirmFor, setConfirmFor] = useState<string | null>(null);
+  // The request as the chat model understood it (English, editable), for one (mode, image?, text).
+  const [interp, setInterp] = useState<{ sig: string; text: string; note?: string } | null>(null);
+  const [interpLoading, setInterpLoading] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const stickRef = useRef(true);
@@ -132,11 +136,14 @@ export default function Chat() {
   const quoteSig = mediaReady ? `${mode}|${mediaKey}|${refImage ? 1 : 0}|${quoteNonce}` : null;
   const q = quote && quote.sig === quoteSig ? quote : null;
   const mediaPrompt = input.trim() || (mode === "video" && refImage ? DEFAULT_ANIMATE_PROMPT : "");
-  const overCap = !!q?.credits && q.remaining !== undefined && q.credits > q.remaining;
+  const overCap = !!q?.credits && q.remaining != null && q.credits > q.remaining;
   const canGenerate = mediaReady && !!q?.credits && !q.error && q.affordable !== false && !overCap && !!mediaPrompt && !processing;
   // Spending needs two taps: the first arms it for exactly this request, any change disarms it.
   const confirmSig = `${quoteSig}|${input}|${refImage?.thumb.slice(-24) ?? ""}`;
-  const confirming = canGenerate && confirmFor === confirmSig;
+  const interpSig = mediaMode ? `${mode}|${refImage ? 1 : 0}|${mediaPrompt}` : null;
+  const ip = interp && interp.sig === interpSig ? interp : null;
+  const interpreting = !!interpSig && interpLoading === interpSig;
+  const confirming = canGenerate && confirmFor === confirmSig && !!ip;
   const mediaInfo = !mediaCfg?.available
     ? MSG_MEDIA_UNAVAILABLE
     : !q
@@ -147,7 +154,7 @@ export default function Chat() {
           ? "אין מספיק קרדיטים בחשבון ה-OpenArt."
           : overCap
             ? `הגעתם לתקרה היומית של ${q.cap} קרדיטים. אפשר לנסות שוב מחר.`
-            : `${q.credits} קרדיטים · נותרו היום ${q.remaining} מתוך ${q.cap}${confirming ? " · הקישו שוב לאישור" : ""}`;
+            : `${q.credits} קרדיטים${q.cap != null ? ` · נותרו היום ${q.remaining} מתוך ${q.cap}` : ""}${confirming ? " · הקישו שוב לאישור" : ""}`;
   const mediaInfoWarn = !mediaCfg?.available || !!q?.error || q?.affordable === false || overCap;
   // Narrow screens: the textarea gets its own row whenever the buttons row would be crowded.
   const twoRow = showPicker || !!mediaCfg?.configured;
@@ -455,10 +462,33 @@ export default function Chat() {
   async function generateMedia() {
     if (!canGenerate || !mediaOption || !q?.credits || !convs) return; // canGenerate implies an image/video mode
     if (!confirming) {
-      setConfirmFor(confirmSig); // first tap: show the price as a confirmation
+      // First tap: show how the request was understood (English, editable) and arm the price.
+      if (!ip) {
+        const sig = interpSig!;
+        setInterpLoading(sig);
+        let next = { sig, text: mediaPrompt, note: ENHANCE_FALLBACK_NOTE as string | undefined };
+        try {
+          const res = await fetch("/api/media/enhance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: mode, prompt: mediaPrompt, withImage: !!refImage }),
+          });
+          if (res.status === 401) return router.replace("/login");
+          const body = await res.json().catch(() => null);
+          if (res.ok && typeof body?.prompt === "string") next = { sig, text: body.prompt, note: body.note };
+        } catch {
+          // offline: keep the original prompt with the note
+        } finally {
+          setInterpLoading(null);
+        }
+        setInterp(next);
+      }
+      setConfirmFor(confirmSig);
       return;
     }
     setConfirmFor(null);
+    const englishPrompt = ip!.text.trim() || mediaPrompt;
+    setInterp(null);
     const kind = mode;
     const credits = q.credits;
     const ref = refImage;
@@ -469,6 +499,7 @@ export default function Chat() {
       kind,
       status: "pending",
       prompt: mediaPrompt,
+      englishPrompt,
       optionKey: mediaOption.key,
       label: mediaOption.label,
       modelName: mediaOption.modelName,
@@ -495,7 +526,7 @@ export default function Chat() {
         body: JSON.stringify({
           kind,
           key: mediaOption.key,
-          prompt: mediaPrompt,
+          prompt: englishPrompt,
           credits,
           image: ref ? (ref.source ? { source: ref.source } : { dataUrl: ref.dataUrl }) : null,
         }),
@@ -508,7 +539,7 @@ export default function Chat() {
         return refreshMedia();
       }
       patch({ jobId: body.id }); // polling picks it up from here
-      setMediaCfg((c) => c && c.usage ? { ...c, usage: { ...c.usage, spent: c.usage.spent + credits, remaining: c.usage.remaining - credits } } : c);
+      setMediaCfg((c) => c && c.usage ? { ...c, usage: { ...c.usage, spent: c.usage.spent + credits, remaining: c.usage.remaining === null ? null : c.usage.remaining - credits } } : c);
       setQuoteNonce((n) => n + 1); // today's remaining credits changed
     } catch {
       patch({ status: "failed", error: MSG_NETWORK });
@@ -553,7 +584,11 @@ export default function Chat() {
           onRename={(id, title) => updateConv(id, (c) => ({ ...c, title }))}
           onTogglePin={(id) => updateConv(id, (c) => ({ ...c, pinned: !c.pinned }))}
           onDelete={deleteConversation}
-          footer={mediaCfg?.available && mediaCfg.usage ? `קרדיטים היום: ${mediaCfg.usage.spent} מתוך ${mediaCfg.usage.cap}` : undefined}
+          footer={
+            mediaCfg?.available && mediaCfg.usage
+              ? `קרדיטים היום: ${mediaCfg.usage.spent}${mediaCfg.usage.cap !== null ? ` מתוך ${mediaCfg.usage.cap}` : ""}`
+              : undefined
+          }
         />
 
       <div inert={modalDrawer} className="flex min-h-dvh min-w-0 flex-1 flex-col">
@@ -729,6 +764,29 @@ export default function Chat() {
                   )}
                 </div>
               )}
+              {mediaMode && (ip || interpreting) && (
+                <div className="px-2 pb-1.5">
+                  <label htmlFor="interp" className="block text-[13px] text-muted">
+                    כך הבנו את הבקשה
+                  </label>
+                  {ip ? (
+                    <textarea
+                      id="interp"
+                      dir="auto"
+                      rows={3}
+                      value={ip.text}
+                      onChange={(e) => setInterp({ ...ip, text: e.target.value })}
+                      maxLength={2000}
+                      className="mt-1 block w-full resize-none rounded-xl bg-bubble px-3 py-2 text-[14px] leading-5 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    />
+                  ) : (
+                    <p role="status" className="mt-1 text-[14px] text-muted">
+                      מנסחים את הבקשה…
+                    </p>
+                  )}
+                  {ip?.note && <p className="mt-1 text-[13px] text-warn">{ip.note}</p>}
+                </div>
+              )}
               {mediaMode && (
                 // Live price and today's remaining credits; the price shown is the one confirmed.
                 <p role="status" data-testid="media-info" className={`px-2 pb-1 text-[13px] ${mediaInfoWarn ? "text-danger" : "text-muted"}`}>
@@ -835,7 +893,7 @@ export default function Chat() {
               ) : mediaMode ? (
                 <button
                   type="submit"
-                  disabled={!canGenerate || !convs}
+                  disabled={!canGenerate || !convs || interpreting}
                   aria-label={confirming ? `אישור: יצירה ב-${q?.credits} קרדיטים` : `יצירה · ${q?.credits ?? "…"} קרדיטים`}
                   title={confirming ? "הקישו לאישור" : "יצירה"}
                   data-confirming={confirming || undefined}

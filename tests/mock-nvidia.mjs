@@ -93,7 +93,12 @@ http
 
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     const slow = last.includes("ארוך");
-    const text = slow
+    // Prompt enhancement for image/video (system prompt from lib/openart/enhance.ts): answers with a
+    // preamble and quotes, like real models sometimes do, so the app's cleanup is exercised.
+    const enhancing = textOf(body.messages[0]).startsWith("You write prompts for");
+    const text = enhancing
+      ? `<think>translate</think>Prompt: "EN(${textOf(body.messages[0]).includes("video") ? "video" : "image"}): ${last}"`
+      : slow
       ? LONG
       : last.includes("ניתוק")
         ? "התחלתי לענות ואז"

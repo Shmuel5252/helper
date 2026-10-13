@@ -182,7 +182,7 @@ export async function generate(body: {
   const fresh = await cost(kind, opt, withImage);
   if (body.credits !== fresh.credits) throw new MediaError(MSG.priceChanged, 409, { credits: fresh.credits });
   if (!fresh.affordable) throw new MediaError(MSG.noCredits, 402);
-  if (!(await reserve(fresh.credits))) throw new MediaError(MSG.cap(DAILY_CAP), 429, { cap: DAILY_CAP });
+  if (!(await reserve(fresh.credits))) throw new MediaError(MSG.cap(DAILY_CAP!), 429, { cap: DAILY_CAP });
 
   const day = israelDay();
   try {

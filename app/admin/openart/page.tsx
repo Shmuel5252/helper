@@ -119,7 +119,7 @@ async function Panel({ searchParams }: { searchParams: PageProps<"/admin/openart
           <div className="flex justify-between gap-4">
             <dt className="text-muted">שימוש היום</dt>
             <dd>
-              {today.spent} מתוך {today.cap} קרדיטים
+              {today.cap === null ? `${today.spent} קרדיטים (ללא תקרה יומית)` : `${today.spent} מתוך ${today.cap} קרדיטים`}
             </dd>
           </div>
         )}

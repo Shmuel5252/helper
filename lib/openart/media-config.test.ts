@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_IMAGE_MODELS, DEFAULT_VIDEO_MODELS, modeFor, parseMediaOptions, publicMediaOptions } from "./media-config.ts";
+import { DEFAULT_IMAGE_MODELS, DEFAULT_VIDEO_MODELS, modeFor, parseCap, parseMediaOptions, publicMediaOptions } from "./media-config.ts";
 
 const quiet = () => {};
 
@@ -41,4 +41,10 @@ test("mode follows kind and whether a reference image is attached", () => {
   assert.equal(modeFor("image", true), "image2image");
   assert.equal(modeFor("video", false), "text2video");
   assert.equal(modeFor("video", true), "image2video");
+});
+
+test("daily credit cap is optional: unset, empty, 0 or junk means no limit", () => {
+  for (const raw of [undefined, "", " ", "0", "-5", "abc"]) assert.equal(parseCap(raw), null, String(raw));
+  assert.equal(parseCap("200"), 200);
+  assert.equal(parseCap(" 150 "), 150);
 });

@@ -78,6 +78,7 @@ for (const width of [375, 1280]) {
     };
     const textarea = page.getByLabel("הודעה");
     const info = page.getByTestId("media-info");
+    const understood = page.getByLabel("כך הבנו את הבקשה");
     const radio = (name) => page.getByRole("radio", { name });
     const goButton = page.locator("form button[type=submit]");
     const lastCard = () => page.locator("[data-media-status]").last();
@@ -112,13 +113,21 @@ for (const width of [375, 1280]) {
       await page.waitForFunction(() => document.querySelector("form button[type=submit]")?.dataset.confirming === "true");
       assert.match(await info.innerText(), /הקישו שוב לאישור/);
       assert.equal(generateCalls.length, 0, "nothing spent on the first tap");
+      // The chat model's English reading, cleaned of its preamble, quotes and <think>.
+      assert.equal(await understood.inputValue(), "EN(image): חתול כתום על ספה");
+      assert.equal(await understood.getAttribute("dir"), "auto");
       await shot("media-confirm");
       await textarea.fill("חתול כתום על ספה ירוקה");
       assert.equal(await goButton.getAttribute("data-confirming"), null, "changed text disarms");
+      assert.equal(await understood.count(), 0, "and hides the old reading");
     });
 
     await check(`[${tag}] image result: progress card, then the image from our own domain, label with cost`, async () => {
-      await confirmAndGo();
+      await goButton.click();
+      await understood.waitFor();
+      await understood.fill("An orange cat sleeping on a green sofa, soft window light"); // the user fixes the reading
+      assert.equal(await goButton.getAttribute("data-confirming"), "true", "editing the English keeps it armed");
+      await goButton.click();
       await waitCard("pending");
       assert.match(await lastCard().innerText(), /יוצר תמונה…/);
       await waitCard("done");
@@ -127,6 +136,11 @@ for (const width of [375, 1280]) {
       await page.waitForFunction(() => document.querySelector("[data-media-status=done] img")?.naturalWidth > 0);
       assert.equal(await lastCard().getByTestId("media-label").innerText(), "תמונה · חסכוני · 15 קרדיטים");
       assert.equal(generateCalls.length, 1);
+      assert.equal((await oaState()).jobs.at(-1).params.prompt, "An orange cat sleeping on a green sofa, soft window light");
+      const saved = JSON.parse(await page.evaluate(() => localStorage.getItem("ai-chat:v2")));
+      const media = saved.conversations[0].messages.find((m) => m.media)?.media;
+      assert.equal(media?.prompt, "חתול כתום על ספה ירוקה");
+      assert.equal(media?.englishPrompt, "An orange cat sleeping on a green sofa, soft window light");
       await shot("media-image");
     });
 
@@ -217,6 +231,21 @@ for (const width of [375, 1280]) {
     });
 
     if (tag === "375-light") {
+      await check(`[${tag}] chat model unavailable: original prompt with a Hebrew note, nothing spent`, async () => {
+        await radio("תמונה").click();
+        await textarea.fill("מטוס על רקע מכסה עננים"); // "מכסה" makes the mock AI answer 429
+        await page.waitForFunction(() => /^15 קרדיטים/.test(document.querySelector("[data-testid=media-info]")?.textContent ?? ""));
+        const before = generateCalls.length;
+        await goButton.click();
+        await understood.waitFor();
+        assert.equal(await understood.inputValue(), "מטוס על רקע מכסה עננים");
+        await page.getByText("לא הצלחנו לנסח את הבקשה באנגלית, אז נשלח את התיאור כפי שכתבתם.").waitFor();
+        assert.equal(await goButton.getAttribute("data-confirming"), "true", "still possible to go on");
+        assert.equal(generateCalls.length, before);
+        await shot("media-enhance-fallback");
+        await textarea.fill("");
+      });
+
       await check(`[${tag}] blocked prompt: Hebrew error in the card, credits returned`, async () => {
         await radio("תמונה").click();
         await textarea.fill("תוכן חסום לגמרי");
@@ -273,6 +302,29 @@ for (const width of [375, 1280]) {
         assert.match(await p2.getByTestId("openart-status").innerText(), /מחובר/);
         await p2.screenshot({ path: `${OUT}/admin-openart-${tag}.png` });
         await p2.close();
+      });
+
+      await check(`[${tag}] no daily cap: price without "נותרו היום", sidebar shows usage only`, async () => {
+        // As the server answers when OPENART_DAILY_CREDIT_CAP is unset (cap: null, remaining: null).
+        const uncap = async (route) => {
+          const res = await route.fetch();
+          const body = await res.json();
+          for (const o of [body, body.usage]) if (o && "cap" in o) Object.assign(o, { cap: null, remaining: null });
+          await route.fulfill({ response: res, json: body });
+        };
+        await page.route("**/api/media/config", uncap);
+        await page.route("**/api/media/quote", uncap);
+        await page.reload();
+        await radio("תמונה").click();
+        await textarea.fill("עוד תמונה");
+        await page.waitForFunction(() => document.querySelector("[data-testid=media-info]")?.textContent === "15 קרדיטים");
+        assert.equal(await goButton.isDisabled(), false);
+        await page.getByRole("button", { name: "היסטוריית שיחות" }).click();
+        await page.waitForFunction(() => /^קרדיטים היום: \d+$/.test(document.querySelector("[data-testid=credit-usage]")?.textContent ?? ""));
+        await shot("media-no-cap-sidebar");
+        await page.keyboard.press("Escape");
+        await page.unroute("**/api/media/config");
+        await page.unroute("**/api/media/quote");
       });
     }
 

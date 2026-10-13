@@ -18,7 +18,8 @@ export type MediaResult = {
   kind: "image" | "video";
   status: "pending" | "done" | "failed" | "stopped";
   jobId?: string;
-  prompt: string;
+  prompt: string; // what the user wrote (usually Hebrew)
+  englishPrompt?: string; // what was sent to OpenArt, after enhancement and the user's edits
   optionKey: string;
   label: string;
   modelName: string;

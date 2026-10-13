@@ -70,3 +70,10 @@ export const publicMediaOptions = (opts: MediaOption[]): PublicMediaOption[] =>
 // text→video into image→video.
 export const modeFor = (kind: MediaKind, withImage: boolean) =>
   kind === "image" ? (withImage ? "image2image" : "text2image") : withImage ? "image2video" : "text2video";
+
+// OPENART_DAILY_CREDIT_CAP: a positive number caps the credits spent per Israel day.
+// Unset, empty, 0 or anything else → null (no daily limit).
+export function parseCap(raw: string | undefined): number | null {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}

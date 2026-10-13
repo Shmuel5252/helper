@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decrypt, encrypt } from "./crypto.ts";
 import { accountSummary } from "./account.ts";
+import { cleanEnhanced, enhanceSystemPrompt } from "./enhance.ts";
 import { israelDay } from "./day.ts";
 
 const KEY = Buffer.alloc(32, 7).toString("base64");
@@ -34,4 +35,22 @@ test("account balance is read from the real account_get shape", () => {
   for (const bad of [null, undefined, "x", {}, { credits: "2800" }, { credits: NaN }, { balance: 5 }]) {
     assert.equal(accountSummary(bad).credits, undefined);
   }
+});
+
+test("prompt enhancement: system prompt per task, literal reading, cleaned answer", () => {
+  const image = enhanceSystemPrompt("image", false);
+  assert.match(image, /AI image generator/);
+  assert.match(image, /under 80 words/);
+  assert.match(image, /Never add brand names/);
+  assert.match(image, /El Al/);
+  assert.match(enhanceSystemPrompt("image", true), /changes the attached image/);
+  assert.match(enhanceSystemPrompt("video", false), /AI video generator/);
+  assert.match(enhanceSystemPrompt("video", true), /first frame/);
+
+  assert.equal(cleanEnhanced('Prompt: "A small airplane flying above the clouds."'), "A small airplane flying above the clouds.");
+  assert.equal(cleanEnhanced("<think>plan it</think>\n  An orange cat\n on a sofa  "), "An orange cat on a sofa");
+  assert.equal(cleanEnhanced("“A red kite”"), "A red kite");
+  assert.equal(cleanEnhanced("<think>never closed"), "");
+  assert.equal(cleanEnhanced("   "), "");
+  assert.equal(cleanEnhanced("x".repeat(3000)).length, 1000);
 });
