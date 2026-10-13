@@ -7,7 +7,7 @@ import fs from "node:fs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3101";
 const OA = "http://localhost:4020";
-const KV = "http://localhost:4030";
+const KV = process.env.TEST_KV_URL ?? "http://localhost:4030";
 const CODE = "test-code-123";
 const OUT = "test-screenshots";
 fs.mkdirSync(OUT, { recursive: true });

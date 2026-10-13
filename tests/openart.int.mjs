@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3101";
 const OA = "http://localhost:4020";
-const KV = "http://localhost:4030";
+const KV = process.env.TEST_KV_URL ?? "http://localhost:4030";
 const KEY = Buffer.alloc(32, 7); // same fixed test key as tests/start-test-app.mjs
 
 const results = [];
@@ -93,7 +93,10 @@ await check("connect: DCR with an honest client name, PKCE, callback to this ori
   assert.deepEqual(s.clients.map((c) => c.client_name), ["ai-chat (Shmuel)"]);
   const html = await adminPage(admin);
   assert.match(html, /מחובר/);
-  assert.match(html, /data-testid="balance">2800</);
+  assert.match(html, /data-testid="balance">2,800</);
+  // A stateless server (no Mcp-Session-Id) is a normal success: no refresh for a valid token.
+  await adminPage(admin);
+  assert.equal((await state()).refreshCount, s.refreshCount, "valid token must not trigger a refresh");
 });
 
 await check("tokens are stored encrypted (no plaintext token in Redis)", async () => {
@@ -127,7 +130,7 @@ await check("expired access token: 401 → one refresh for 6 concurrent requests
   await control({ expireAccessTokens: true, refreshDelayMs: 500 });
   const before = (await state()).refreshCount;
   const pages = await Promise.all(Array.from({ length: 6 }, () => adminPage(admin)));
-  for (const html of pages) assert.match(html, /data-testid="balance">2800</);
+  for (const html of pages) assert.match(html, /data-testid="balance">2,800</);
   const s = await state();
   assert.equal(s.refreshCount, before + 1);
   assert.equal(s.deadChains, 0, "an old refresh token was never reused");
@@ -143,7 +146,7 @@ await check("refresh rejected → marked broken, tokens deleted; reconnect works
   const start = await req("/api/admin/openart/connect", { method: "POST", cookie: admin });
   const approved = await req(start.headers.get("location"));
   await req(approved.headers.get("location"), { cookie: admin });
-  assert.match(await adminPage(admin), /data-testid="balance">2800</);
+  assert.match(await adminPage(admin), /data-testid="balance">2,800</);
 });
 
 await check("disconnect revokes at OpenArt and deletes the tokens", async () => {

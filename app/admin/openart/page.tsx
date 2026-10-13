@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { ADMIN_COOKIE, isAdmin } from "@/lib/auth";
+import { accountSummary } from "@/lib/openart/account";
 import { configured, status } from "@/lib/openart/connection";
 import { callTool } from "@/lib/openart/mcp";
 import { usage } from "@/lib/openart/usage";
@@ -24,17 +25,6 @@ const fmt = (ms: number) =>
 
 const button =
   "press h-11 rounded-2xl px-5 text-base font-medium transition-[opacity,transform] disabled:opacity-40";
-
-// Finds the credit balance and plan in account_get's answer without assuming its exact shape.
-function pick(obj: unknown, keys: string[]): string | number | undefined {
-  if (!obj || typeof obj !== "object") return undefined;
-  for (const [k, v] of Object.entries(obj)) {
-    if (keys.includes(k) && (typeof v === "number" || typeof v === "string")) return v;
-    const nested = pick(v, keys);
-    if (nested !== undefined) return nested;
-  }
-  return undefined;
-}
 
 async function Panel({ searchParams }: { searchParams: PageProps<"/admin/openart">["searchParams"] }) {
   const jar = await cookies();
@@ -73,12 +63,16 @@ async function Panel({ searchParams }: { searchParams: PageProps<"/admin/openart
 
   const ready = configured();
   let st = ready ? await status().catch(() => null) : null;
-  const account = st?.connected ? await callTool("openart_account_get").catch(() => null) : null;
+  const account = st?.connected
+    ? await callTool("openart_account_get").catch((e: Error) => {
+        console.error("OpenArt account_get failed:", e.message);
+        return null;
+      })
+    : null;
   // That call may have just found the chain broken (refresh rejected): show the current state.
   if (st?.connected && !account) st = await status().catch(() => null);
   const today = ready ? await usage().catch(() => null) : null;
-  const balance = pick(account, ["balance", "credits", "creditBalance", "remainingCredits"]);
-  const plan = pick(account, ["plan", "planName", "subscriptionPlan", "tier"]);
+  const { credits: balance, plan } = accountSummary(account);
 
   return (
     <div className="space-y-6">
@@ -111,7 +105,7 @@ async function Panel({ searchParams }: { searchParams: PageProps<"/admin/openart
           <div className="flex justify-between gap-4">
             <dt className="text-muted">יתרת קרדיטים</dt>
             <dd className="font-medium" data-testid="balance">
-              {balance ?? "לא זמין"}
+              {balance !== undefined ? balance.toLocaleString("he-IL") : "לא זמין"}
             </dd>
           </div>
         )}

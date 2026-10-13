@@ -87,7 +87,7 @@ function jobStatus(job) {
 }
 
 const TOOLS = {
-  openart_account_get: () => ({ email: "owner@example.com", plan: "Plus", credits: S.balance }),
+  openart_account_get: () => ({ user: { uid: "u_mock", email: "owner@example.com" }, plan: "Plus", credits: S.balance }), // real shape
   openart_model_list: () => ({ balance: S.balance, models: Object.keys(PRICES).map((id) => ({ id })) }),
   openart_model_cost: ({ model, mode, params = {} }) => {
     if (!PRICES[model]) throw new Error(`unknown model ${model}`);
@@ -137,7 +137,7 @@ async function mcp(req, res) {
     return json(res, 401, { error: "invalid_token" }, { "WWW-Authenticate": `Bearer resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp"` });
   const msg = JSON.parse((await readBody(req)).toString());
   if (msg.method === "initialize")
-    return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2025-06-18", serverInfo: { name: "mock-openart", version: "0" }, capabilities: { tools: {} } } }, { "Mcp-Session-Id": rnd(8) });
+    return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2025-06-18", serverInfo: { name: "mock-openart", version: "0" }, capabilities: { tools: {} } } }); // stateless like the real server: no Mcp-Session-Id
   if (msg.id === undefined) {
     res.writeHead(202);
     return res.end();

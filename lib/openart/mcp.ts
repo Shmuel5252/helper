@@ -44,13 +44,15 @@ async function readReply(res: Response, id: number) {
   return reply.result;
 }
 
-async function session(token: string) {
+// Returns false on 401. OpenArt's server is stateless (no Mcp-Session-Id), so a null session
+// id is a normal success, not an auth failure.
+async function session(token: string): Promise<string | null | false> {
   const res = await post(
     { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: "ai-chat", version: "1" } } },
     token,
     null,
   );
-  if (res.status === 401) return null;
+  if (res.status === 401) return false;
   if (!res.ok) throw new Error(`MCP initialize HTTP ${res.status}`);
   const sessionId = res.headers.get("mcp-session-id");
   await readReply(res, 1);
@@ -63,7 +65,7 @@ export async function callTool<T = Record<string, unknown>>(name: string, args: 
   let token = await accessToken();
   for (let attempt = 0; attempt < 2; attempt++) {
     const sid = await session(token);
-    if (sid === null) {
+    if (sid === false) {
       token = await accessToken({ failed: token });
       continue;
     }
