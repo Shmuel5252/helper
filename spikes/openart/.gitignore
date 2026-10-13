@@ -1,0 +1,2 @@
+# OAuth client, tokens and call results: never commit
+.secrets/
