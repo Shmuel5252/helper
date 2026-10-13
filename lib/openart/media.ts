@@ -62,7 +62,8 @@ export function hebrewMediaError(e: unknown): MediaError {
 export async function mediaConfig() {
   const available = configured() && (await connectionStatus().catch(() => null))?.connected === true;
   return {
-    available,
+    configured: configured(), // false: the site has no OpenArt setup at all (modes hidden)
+    available, // false while disconnected/broken: modes shown with a Hebrew notice
     image: publicMediaOptions(OPTIONS.image),
     video: publicMediaOptions(OPTIONS.video),
     usage: available ? await usage().catch(() => null) : null,

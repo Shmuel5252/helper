@@ -14,7 +14,7 @@ export type MediaOption = {
 export type PublicMediaOption = Pick<MediaOption, "key" | "label" | "description"> & { modelName: string };
 
 export const DEFAULT_IMAGE_MODELS =
-  "lite|nano-banana-2-lite|מהיר וחסכוני|תמונה מהירה וזולה|,nb2|nano-banana-2|איכותי|פרטים עשירים יותר|resolution=1K";
+  "lite|nano-banana-2-lite|חסכוני|תמונה מהירה וזולה|,nb2|nano-banana-2|איכותי|פרטים עשירים יותר|resolution=1K";
 export const DEFAULT_VIDEO_MODELS =
   "pixverse|pixverseV6|סרטון קצר|5 שניות, 540p|duration=5;resolution=540p;generateAudio=false,veo|veo3-1|סרטון איכותי|4 שניות, 720p, עם שמע|duration=4;resolution=720p;mode=lite";
 

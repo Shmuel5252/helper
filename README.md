@@ -118,6 +118,7 @@ https://<כתובת האתר>/?k=<ACCESS_CODE>
 | `OPENART_DAILY_CREDIT_CAP` | תקרת קרדיטים ליום (לפי שעון ישראל). ברירת מחדל: 200 |
 | `OPENART_IMAGE_MODELS` / `OPENART_VIDEO_MODELS` | לא חובה. אפשרויות התמונה והסרטון, בפורמט `מפתח|מזהה מודל|שם|תיאור|הגדרות` (הגדרות כמו `duration=5;resolution=540p`). ברירת מחדל: Nano Banana 2 Lite, Nano Banana 2 (1K), PixVerse V6 (5 שניות, 540p), Veo 3.1 (4 שניות, 720p) |
 
+- **בצ׳אט:** ליד כפתור הצירוף יש מתג צ׳אט / תמונה / סרטון. במצב תמונה או סרטון, הכפתור ליד השליחה מציג את אפשרויות OpenArt, ולידו מופיעים המחיר והקרדיטים שנותרו היום. הקשה ראשונה על "יצירה" מבקשת אישור, והקשה שנייה מוציאה את הקרדיטים. התוצאה מופיעה כהודעה בשיחה, עם "הורדה", "הפוך לסרטון" ו"ערוך". השיחה שומרת רק את הכתובת (`/media/...`), ולמודל הצ׳אט היצירה מועברת כטקסט (`[תמונה שנוצרה: ...]`). בתחתית רשימת השיחות מופיע כמה קרדיטים נוצלו היום.
 - **דף הניהול `/admin/openart`:** מצב החיבור, יתרת הקרדיטים, "חיבור / חיבור מחדש" (מעבר ל-OpenArt לאישור) ו"ניתוק" (ביטול האסימונים ומחיקתם).
 - **אסימונים:** נשמרים מוצפנים (AES-GCM) ב-Redis. אסימון הרענון מתחלף בכל רענון, ולכן נשמר תמיד החדש ביותר. נעילה ב-Redis מבטיחה ששני רענונים לא ירוצו במקביל.
 - **רענון יומי:** משימת Cron (`vercel.json`) מרעננת פעם ביום, כדי שהחיבור לא יפוג.
@@ -152,12 +153,16 @@ npm run e2e:models   # בורר המודלים (כפתור ליד השליחה)
 npm run e2e:images   # צירוף תמונות
 npm run e2e:quota    # סימון מכסה יומית בבורר
 npm run e2e:auth     # קישור כניסה ישיר, עוגייה, אתר פתוח
+npm run test:openart # חיבור OpenArt, רענון, יצירה ו-/media (בלי דפדפן)
+npm run e2e:media    # מצבי תמונה/סרטון, אישור מחיר, תוצאות, שגיאות
 ```
 
-`e2e:models` ו-`e2e:auth` צריכים גם מופע שני, עם אפשרות מודל אחת ובלי קוד גישה:
+`test:openart` ו-`e2e:media` צריכים גם את OpenArt ו-Upstash המדומים (`npm run mock:openart` ו-`npm run mock:upstash`, כל אחד בחלון נפרד).
+
+`e2e:models` ו-`e2e:auth` צריכים גם מופע שני, עם אפשרות מודל אחת, בלי קוד גישה ובלי OpenArt:
 
 ```bash
-TEST_ACCESS_CODE= TEST_AI_MODELS='only|mock-fast|only||none|1' PORT=3102 npm run test:app   # בחלון נפרד
+TEST_ACCESS_CODE= TEST_KV_URL= TEST_AI_MODELS='only|mock-fast|only||none|1' PORT=3102 npm run test:app   # בחלון נפרד
 ```
 
 צילומי המסך נשמרים בתיקייה `test-screenshots/`. אם הדפדפן של Playwright לא מותקן, מריצים `npx playwright install chromium`, או מגדירים `CHROME_PATH` לנתיב של Chromium קיים.

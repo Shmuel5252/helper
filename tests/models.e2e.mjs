@@ -127,7 +127,7 @@ for (const width of [375, 1280]) {
       await textarea.fill(Array.from({ length: 12 }, (_, i) => `שורה ארוכה מספר ${i} עם עוד קצת טקסט`).join("\n"));
       const t = await textarea.boundingBox();
       assert.ok(t.height > 140 && t.height <= 161, `height ${t.height}`);
-      assert.ok(t.width > (mobile ? 280 : 500), `width ${t.width}`);
+      assert.ok(t.width > (mobile ? 280 : 420), `width ${t.width}`); // desktop row also holds the chat/image/video switch
       const c = await assertNextToSend();
       assert.ok(c.y + c.height <= (mobile ? 812 : 860), "chip still on screen");
       await shot("composer-long-text");
@@ -251,7 +251,7 @@ for (const width of [375, 1280]) {
       await check(`[${tag}] with a single option there is no chip and the composer is one row`, async () => {
         const OPEN = process.env.OPEN_URL ?? "http://localhost:3102"; // single-option instance, gate off
         const up = await fetch(`${OPEN}/api/models`).then((r) => r.json(), () => null);
-        assert.ok(up?.models?.length === 1, `start it with: TEST_ACCESS_CODE= TEST_AI_MODELS='only|mock-fast|only||none|1' PORT=3102 node tests/start-test-app.mjs`);
+        assert.ok(up?.models?.length === 1, `start it with: TEST_ACCESS_CODE= TEST_KV_URL= TEST_AI_MODELS='only|mock-fast|only||none|1' PORT=3102 node tests/start-test-app.mjs`);
         const p2 = await ctx.newPage();
         await p2.goto(`${OPEN}/`);
         await p2.getByRole("heading", { name: "במה אפשר לעזור?" }).waitFor();

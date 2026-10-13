@@ -68,7 +68,7 @@ export default function ModelPicker({
         aria-expanded={open}
         aria-label={`בחירת מודל, כרגע: ${current.label}${currentOut ? " (נגמרה המכסה היומית)" : ""}`}
         data-exhausted={currentOut || undefined}
-        className="press relative flex h-8 max-w-28 items-center gap-1 rounded-full bg-bubble ps-2.5 pe-1.5 text-[14px] font-medium text-muted transition-[background-color,color,transform] hover:bg-line hover:text-fg aria-expanded:bg-line aria-expanded:text-fg"
+        className="press relative flex h-8 max-w-24 items-center sm:max-w-32 gap-1 rounded-full bg-bubble ps-2.5 pe-1.5 text-[14px] font-medium text-muted transition-[background-color,color,transform] hover:bg-line hover:text-fg aria-expanded:bg-line aria-expanded:text-fg"
       >
         <span className="truncate">{current.label}</span>
         {currentOut && <span aria-hidden className="size-2 shrink-0 rounded-full bg-warn" />}

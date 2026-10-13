@@ -10,7 +10,26 @@ export type Msg = {
   modelKey?: string; // assistant: which model option answered
   images?: string[]; // user: ~200px JPEG thumbnails (data URLs), persisted
   full?: string[]; // user: the resized images actually sent; memory only, never persisted
+  media?: MediaResult; // assistant: an OpenArt image/video generation instead of text
 };
+
+// A generated image/video. Stores our proxied URL (/media/...) and metadata, never the file.
+export type MediaResult = {
+  kind: "image" | "video";
+  status: "pending" | "done" | "failed" | "stopped";
+  jobId?: string;
+  prompt: string;
+  optionKey: string;
+  label: string;
+  modelName: string;
+  credits: number;
+  url?: string;
+  poster?: string;
+  error?: string;
+};
+
+// How a generation appears in the history sent to the chat model.
+export const mediaAsText = (m: MediaResult) => `[${m.kind === "video" ? "סרטון שנוצר" : "תמונה שנוצרה"}: ${m.prompt}]`;
 
 export type Conversation = {
   id: string;

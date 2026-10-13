@@ -4,12 +4,16 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExtern
 import { useRouter } from "next/navigation";
 import { ArrowUp, Check, Copy, ImagePlus, Menu, Square, SquarePen, X } from "lucide-react";
 import { ERROR_MARK, MAX_CHARS, MSG_GENERIC, prepareHistory } from "@/lib/chat";
-import { loadHistory, makeTitle, newId, saveHistory, type Conversation, type Msg } from "@/lib/history";
+import { loadHistory, makeTitle, mediaAsText, newId, saveHistory, type Conversation, type MediaResult, type Msg } from "@/lib/history";
 import { IMAGE_ERRORS, MAX_BODY_BYTES, MAX_IMAGES } from "@/lib/images";
 import type { PublicModel } from "@/lib/models";
+import type { PublicMediaOption } from "@/lib/openart/media-config";
 import { loadExhausted, markExhausted, type Exhausted } from "@/lib/quota";
+import MediaCard from "./MediaCard";
 import ModelPicker from "./ModelPicker";
+import ModeSwitch, { type Mode } from "./ModeSwitch";
 import Sidebar from "./Sidebar";
+import { useMediaPolling } from "./useMediaPolling";
 
 // Markdown is split into its own chunk so the page is ready to type before it loads.
 const Markdown = lazy(() => import("./Markdown"));
@@ -22,6 +26,18 @@ const MSG_IMAGE_FAILED = "לא הצלחנו לעבד את התמונה. נסו �
 
 // A slot is added per picked file (in pick order) and filled once processing finishes.
 type Attachment = { id: string; thumb?: string; full?: string };
+
+// OpenArt generation (image/video), from /api/media/config.
+type Usage = { spent: number; cap: number; remaining: number };
+type MediaConfig = { configured: boolean; available: boolean; image: PublicMediaOption[]; video: PublicMediaOption[]; usage: Usage | null };
+type Quote = { sig: string; credits?: number; remaining?: number; cap?: number; affordable?: boolean; error?: string };
+const MSG_MEDIA_UNAVAILABLE = "יצירת תמונות וסרטונים לא זמינה כרגע.";
+const DEFAULT_ANIMATE_PROMPT = "הנפש את התמונה בתנועה טבעית";
+const PLACEHOLDERS: Record<Mode, string> = { chat: "שאלו כל דבר…", image: "תארו את התמונה…", video: "תארו את הסרטון…" };
+
+// The composer chip lists OpenArt options with the same picker as chat models.
+const NO_EXHAUSTED: Exhausted = {};
+const asPickerModel = (o: PublicMediaOption): PublicModel => ({ ...o, vision: false, group: o.key });
 
 const NO_MESSAGES: Msg[] = [];
 const MSG_NETWORK = "אין חיבור לאינטרנט, או שהחיבור נקטע. נסו שוב.";
@@ -68,6 +84,14 @@ export default function Chat() {
   const [exhausted, setExhausted] = useState<Exhausted>({});
   const [now, setNow] = useState(0);
   const [attention, setAttention] = useState(0);
+  // Image/video generation state.
+  const [mode, setMode] = useState<Mode>("chat");
+  const [mediaCfg, setMediaCfg] = useState<MediaConfig | null>(null);
+  const [mediaKeys, setMediaKeys] = useState<Partial<Record<"image" | "video", string>>>({});
+  const [sourceRef, setSourceRef] = useState<string | null>(null); // a previous result (/media/...) to edit or animate
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [quoteNonce, setQuoteNonce] = useState(0);
+  const [confirmFor, setConfirmFor] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const stickRef = useRef(true);
@@ -88,15 +112,100 @@ export default function Chat() {
   const showPicker = !!models && models.length > 1;
   // The option that produced an answer (for the small label under it); only when there's a choice.
   const answeredBy = (key?: string) => (showPicker ? models.find((m) => m.key === key) : undefined);
+  // Image/video mode: OpenArt options, the chosen one, an optional reference image, a live quote.
+  const mediaMode = mode !== "chat";
+  const mediaOptions = mode === "chat" ? [] : (mediaCfg?.[mode] ?? []);
+  const mediaKey = mode === "chat" ? undefined : mediaOptions.some((o) => o.key === mediaKeys[mode]) ? mediaKeys[mode] : mediaOptions[0]?.key;
+  const mediaOption = mediaOptions.find((o) => o.key === mediaKey);
+  const mediaReady = mediaMode && !!mediaCfg?.available && !!mediaOption;
+
   // Images only for options that accept them; otherwise the attach button is hidden.
-  const canAttach = !!models?.find((m) => m.key === currentKey)?.vision;
-  const shown = canAttach ? attachments : []; // hidden (and not sent) for text-only options
+  // Generation always accepts one reference image (edit / start frame).
+  const canAttach = mediaMode ? !!mediaCfg?.available : !!models?.find((m) => m.key === currentKey)?.vision;
+  const shown = !canAttach ? [] : mediaMode ? attachments.slice(0, 1) : attachments; // hidden (and not sent) otherwise
   const pending = shown.filter((a): a is Required<Attachment> => !!a.full);
   const processing = shown.length - pending.length;
+  const refImage = !mediaMode ? null : sourceRef ? { source: sourceRef, thumb: sourceRef } : pending[0] ? { dataUrl: pending[0].full, thumb: pending[0].thumb } : null;
   const closeViewer = useCallback(() => setViewer(null), []);
 
+  // The quote belongs to (mode, option, reference?): a stale one counts as "loading".
+  const quoteSig = mediaReady ? `${mode}|${mediaKey}|${refImage ? 1 : 0}|${quoteNonce}` : null;
+  const q = quote && quote.sig === quoteSig ? quote : null;
+  const mediaPrompt = input.trim() || (mode === "video" && refImage ? DEFAULT_ANIMATE_PROMPT : "");
+  const overCap = !!q?.credits && q.remaining !== undefined && q.credits > q.remaining;
+  const canGenerate = mediaReady && !!q?.credits && !q.error && q.affordable !== false && !overCap && !!mediaPrompt && !processing;
+  // Spending needs two taps: the first arms it for exactly this request, any change disarms it.
+  const confirmSig = `${quoteSig}|${input}|${refImage?.thumb.slice(-24) ?? ""}`;
+  const confirming = canGenerate && confirmFor === confirmSig;
+  const mediaInfo = !mediaCfg?.available
+    ? MSG_MEDIA_UNAVAILABLE
+    : !q
+      ? "מחשב מחיר…"
+      : q.error
+        ? q.error
+        : q.affordable === false
+          ? "אין מספיק קרדיטים בחשבון ה-OpenArt."
+          : overCap
+            ? `הגעתם לתקרה היומית של ${q.cap} קרדיטים. אפשר לנסות שוב מחר.`
+            : `${q.credits} קרדיטים · נותרו היום ${q.remaining} מתוך ${q.cap}${confirming ? " · הקישו שוב לאישור" : ""}`;
+  const mediaInfoWarn = !mediaCfg?.available || !!q?.error || q?.affordable === false || overCap;
+  // Narrow screens: the textarea gets its own row whenever the buttons row would be crowded.
+  const twoRow = showPicker || !!mediaCfg?.configured;
+
+  useEffect(() => {
+    if (!quoteSig) return;
+    let off = false;
+    const [kind, key, withImage] = quoteSig.split("|");
+    fetch("/api/media/quote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, key, withImage: withImage === "1" }),
+    })
+      .then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => null) }))
+      .then(({ ok, body }) => !off && setQuote(ok ? { sig: quoteSig, ...body } : { sig: quoteSig, error: body?.error ?? MSG_GENERIC }))
+      .catch(() => !off && setQuote({ sig: quoteSig, error: MSG_NETWORK }));
+    return () => {
+      off = true;
+    };
+  }, [quoteSig]);
+
+  const refreshMedia = useCallback(() => {
+    fetch("/api/media/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j && typeof j.configured === "boolean" && setMediaCfg(j))
+      .catch(() => {});
+  }, []);
+
+  const updateMedia = useCallback(
+    (jobId: string, patch: Partial<MediaResult>) =>
+      setConvs((cs) =>
+        cs &&
+        cs.map((c) =>
+          c.messages.some((m) => m.media?.jobId === jobId)
+            ? { ...c, messages: c.messages.map((m) => (m.media?.jobId === jobId ? { ...m, media: { ...m.media, ...patch } } : m)) }
+            : c,
+        ),
+      ),
+    [],
+  );
+  const polling = useMediaPolling(convs, updateMedia, refreshMedia);
+
+  function switchMode(next: Mode) {
+    setMode(next);
+    if (next === "chat") setSourceRef(null);
+  }
+
+  // From a result's buttons: edit it, or use it as a video's first frame.
+  function takeAsReference(url: string, next: "image" | "video") {
+    setMode(next);
+    setSourceRef(url);
+    setAttachments([]);
+    inputRef.current?.focus();
+  }
+
   async function addImages(files: File[]) {
-    const room = MAX_IMAGES - attachments.length;
+    if (mediaMode) setSourceRef(null); // a fresh attachment replaces a previous-result reference
+    const room = (mediaMode ? 1 : MAX_IMAGES) - attachments.length;
     if (files.length > room) setToast(IMAGE_ERRORS.count);
     const slots = files.slice(0, Math.max(0, room)).map((file) => ({ file, id: newId() }));
     if (!slots.length) return;
@@ -139,7 +248,8 @@ export default function Chat() {
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => Array.isArray(j?.models) && setModels(j.models))
       .catch(() => {}); // no list: no picker, the server uses its default
-  }, []);
+    refreshMedia(); // no OpenArt setup: no image/video modes
+  }, [refreshMedia]);
 
   function chooseModel(key: string) {
     setLastKey(key);
@@ -272,10 +382,16 @@ export default function Chat() {
     try {
       // Same shaping as the server: only the newest image message carries image data
       // (full size if still in memory, else its thumbnail); older ones become a placeholder.
+      // Generated images/videos go to the chat model as a short text line, and references to
+      // earlier results (/media/...) aren't sent as images.
       const payload = prepareHistory(
         history
-          .filter((m) => !m.error && (m.content || m.images?.length))
-          .map((m) => ({ role: m.role, content: m.content, images: m.full ?? m.images })),
+          .filter((m) => !m.error && (m.content || m.images?.length || m.media?.status === "done"))
+          .map((m) =>
+            m.media
+              ? { role: m.role, content: mediaAsText(m.media) }
+              : { role: m.role, content: m.content, images: (m.full ?? m.images)?.filter((s) => s.startsWith("data:")) },
+          ),
         { vision: canAttach },
       );
       const body = JSON.stringify({ messages: payload, modelKey });
@@ -336,6 +452,69 @@ export default function Chat() {
     }
   }
 
+  async function generateMedia() {
+    if (!canGenerate || !mediaOption || !q?.credits || !convs) return; // canGenerate implies an image/video mode
+    if (!confirming) {
+      setConfirmFor(confirmSig); // first tap: show the price as a confirmation
+      return;
+    }
+    setConfirmFor(null);
+    const kind = mode;
+    const credits = q.credits;
+    const ref = refImage;
+    const now = Date.now();
+    const id = active?.id ?? newId();
+    const userMsg: Msg = ref ? { role: "user", content: input.trim(), images: [ref.thumb] } : { role: "user", content: mediaPrompt };
+    const media: MediaResult = {
+      kind,
+      status: "pending",
+      prompt: mediaPrompt,
+      optionKey: mediaOption.key,
+      label: mediaOption.label,
+      modelName: mediaOption.modelName,
+      credits,
+    };
+    const index = messages.length + 1; // where the result card lands
+    const withCard: Msg[] = [...messages, userMsg, { role: "assistant", content: "", media }];
+    if (active) updateConv(id, (c) => ({ ...c, updatedAt: now, messages: withCard }));
+    else {
+      setConvs((cs) => cs && [{ id, title: makeTitle(mediaPrompt), createdAt: now, updatedAt: now, pinned: false, messages: withCard, modelKey: currentKey }, ...cs]);
+      setActiveId(id);
+    }
+    setInput("");
+    setAttachments([]);
+    setSourceRef(null);
+    stickRef.current = true;
+    const patch = (p: Partial<MediaResult>) =>
+      updateConv(id, (c) => ({ ...c, messages: c.messages.map((m, i) => (i === index && m.media ? { ...m, media: { ...m.media, ...p } } : m)) }));
+
+    try {
+      const res = await fetch("/api/media/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind,
+          key: mediaOption.key,
+          prompt: mediaPrompt,
+          credits,
+          image: ref ? (ref.source ? { source: ref.source } : { dataUrl: ref.dataUrl }) : null,
+        }),
+      });
+      if (res.status === 401) return router.replace("/login");
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.id) {
+        patch({ status: "failed", error: body?.error ?? MSG_GENERIC });
+        if (res.status === 409) setQuoteNonce((n) => n + 1); // price changed: fetch the new one
+        return refreshMedia();
+      }
+      patch({ jobId: body.id }); // polling picks it up from here
+      setMediaCfg((c) => c && c.usage ? { ...c, usage: { ...c.usage, spent: c.usage.spent + credits, remaining: c.usage.remaining - credits } } : c);
+      setQuoteNonce((n) => n + 1); // today's remaining credits changed
+    } catch {
+      patch({ status: "failed", error: MSG_NETWORK });
+    }
+  }
+
   function newChat() {
     stopStreaming();
     setActiveId(null);
@@ -374,6 +553,7 @@ export default function Chat() {
           onRename={(id, title) => updateConv(id, (c) => ({ ...c, title }))}
           onTogglePin={(id) => updateConv(id, (c) => ({ ...c, pinned: !c.pinned }))}
           onDelete={deleteConversation}
+          footer={mediaCfg?.available && mediaCfg.usage ? `קרדיטים היום: ${mediaCfg.usage.spent} מתוך ${mediaCfg.usage.cap}` : undefined}
         />
 
       <div inert={modalDrawer} className="flex min-h-dvh min-w-0 flex-1 flex-col">
@@ -412,8 +592,10 @@ export default function Chat() {
         <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 sm:px-6">
           {convs && messages.length === 0 && (
             <div className="my-auto py-10">
-              <h2 className="mb-6 text-[26px] font-semibold tracking-tight">במה אפשר לעזור?</h2>
-              <div className="grid gap-2.5 sm:grid-cols-2">
+              <h2 className="mb-6 text-[26px] font-semibold tracking-tight">
+                {mode === "image" ? "איזו תמונה ליצור?" : mode === "video" ? "איזה סרטון ליצור?" : "במה אפשר לעזור?"}
+              </h2>
+              <div className={`grid gap-2.5 sm:grid-cols-2 ${mediaMode ? "hidden" : ""}`}>
                 {SUGGESTIONS.map((s) => (
                   <button
                     key={s}
@@ -459,7 +641,16 @@ export default function Chat() {
                   </div>
                 ) : (
                   <div key={i} className="msg-in">
-                    {m.content ? (
+                    {m.media ? (
+                      <MediaCard
+                        m={m.media}
+                        onView={setViewer}
+                        onToVideo={(url) => takeAsReference(url, "video")}
+                        onEdit={(url) => takeAsReference(url, "image")}
+                        onStop={() => m.media?.jobId && polling.stop(m.media.jobId)}
+                        onResume={() => m.media?.jobId && polling.resume(m.media.jobId)}
+                      />
+                    ) : m.content ? (
                       <div dir="auto" className="wrap-break-word">
                         <Suspense fallback={<div className="whitespace-pre-wrap">{m.content}</div>}>
                           <Markdown text={m.content} />
@@ -495,35 +686,57 @@ export default function Chat() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              send(input);
+              if (mediaMode) void generateMedia();
+              else send(input);
             }}
             className="mx-auto max-w-3xl px-3 sm:px-5"
           >
             <div className="rounded-[1.75rem] border border-line bg-surface p-2 shadow-[0_1px_8px_rgb(0_0_0/0.04)] transition-[border-color] focus-within:border-muted/50">
-              {shown.length > 0 && (
+              {(shown.length > 0 || (mediaMode && sourceRef)) && (
                 <div className="flex gap-2.5 px-1.5 pt-1.5 pb-2.5">
-                  {shown.map((a, i) => (
-                    <div key={a.id} className="fade-in relative size-16 shrink-0">
-                      {a.thumb ? (
-                        <Img src={a.thumb} alt={`תמונה מצורפת ${i + 1}`} className="size-16 rounded-xl object-cover" />
-                      ) : (
-                        <div role="status" aria-label="מעבד תמונה…" className="size-16 animate-pulse rounded-xl bg-bubble" />
-                      )}
+                  {mediaMode && sourceRef ? (
+                    <div className="fade-in relative size-16 shrink-0">
+                      <Img src={sourceRef} alt="תמונה מצורפת 1" className="size-16 rounded-xl object-cover" />
                       <button
                         type="button"
-                        onClick={() => setAttachments((list) => list.filter((x) => x.id !== a.id))}
-                        aria-label={`הסרת תמונה ${i + 1}`}
+                        onClick={() => setSourceRef(null)}
+                        aria-label="הסרת תמונה 1"
                         title="הסרה"
                         className="press absolute -inset-s-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full bg-fg text-bg shadow transition-transform"
                       >
                         <X size={14} strokeWidth={2.5} aria-hidden />
                       </button>
                     </div>
-                  ))}
+                  ) : (
+                    shown.map((a, i) => (
+                      <div key={a.id} className="fade-in relative size-16 shrink-0">
+                        {a.thumb ? (
+                          <Img src={a.thumb} alt={`תמונה מצורפת ${i + 1}`} className="size-16 rounded-xl object-cover" />
+                        ) : (
+                          <div role="status" aria-label="מעבד תמונה…" className="size-16 animate-pulse rounded-xl bg-bubble" />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setAttachments((list) => list.filter((x) => x.id !== a.id))}
+                          aria-label={`הסרת תמונה ${i + 1}`}
+                          title="הסרה"
+                          className="press absolute -inset-s-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full bg-fg text-bg shadow transition-transform"
+                        >
+                          <X size={14} strokeWidth={2.5} aria-hidden />
+                        </button>
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
-              {/* RTL order: attach · textarea · model chip · send. On narrow screens with the chip,
-                  the textarea takes its own row and the buttons sit in a row below it. */}
+              {mediaMode && (
+                // Live price and today's remaining credits; the price shown is the one confirmed.
+                <p role="status" data-testid="media-info" className={`px-2 pb-1 text-[13px] ${mediaInfoWarn ? "text-danger" : "text-muted"}`}>
+                  {mediaInfo}
+                </p>
+              )}
+              {/* RTL order: attach · mode · textarea · model chip · send. On narrow screens with the
+                  chip or modes, the textarea takes its own row and the buttons sit in a row below it. */}
               <div className="flex flex-wrap items-end gap-1.5">
               {canAttach && (
                 <button
@@ -532,7 +745,7 @@ export default function Chat() {
                     void loadProcessor().catch(() => {}); // start downloading while the picker is open
                     fileRef.current?.click();
                   }}
-                  disabled={attachments.length >= MAX_IMAGES}
+                  disabled={mediaMode ? !!refImage || shown.length > 0 : attachments.length >= MAX_IMAGES}
                   aria-label="צירוף תמונה"
                   title="צירוף תמונה"
                   className="press flex size-10 shrink-0 items-center justify-center rounded-full text-muted transition-[background-color,color,opacity,transform] hover:bg-bubble hover:text-fg disabled:opacity-35"
@@ -540,11 +753,16 @@ export default function Chat() {
                   <ImagePlus size={21} aria-hidden />
                 </button>
               )}
+              {mediaCfg?.configured && (
+                <div className="flex h-10 items-center">
+                  <ModeSwitch value={mode} onChange={switchMode} />
+                </div>
+              )}
               <input
                 ref={fileRef}
                 type="file"
                 accept="image/*"
-                multiple
+                multiple={!mediaMode}
                 hidden
                 onChange={(e) => {
                   const files = [...(e.target.files ?? [])];
@@ -569,19 +787,22 @@ export default function Chat() {
                     !matchMedia("(pointer: coarse)").matches
                   ) {
                     e.preventDefault();
-                    send(input);
+                    if (mediaMode) void generateMedia();
+                    else send(input);
                   }
                 }}
-                placeholder="שאלו כל דבר…"
+                placeholder={
+                  mediaMode && refImage ? (mode === "image" ? "מה לשנות בתמונה?" : "איך להניע את התמונה? (לא חובה)") : PLACEHOLDERS[mode]
+                }
                 aria-label="הודעה"
                 className={`max-h-40 min-w-0 resize-none bg-transparent py-2 leading-6 outline-none placeholder:text-muted ${
-                  showPicker
-                    ? `order-first w-full px-2 sm:order-0 sm:w-auto sm:flex-1 sm:pe-0 ${canAttach ? "sm:ps-0.5" : ""}`
+                  twoRow
+                    ? `order-first w-full px-2 sm:order-0 sm:w-auto sm:flex-1 sm:pe-0 ${canAttach || mediaCfg?.configured ? "sm:ps-0.5" : ""}`
                     : `flex-1 ${canAttach ? "ps-0.5" : "ps-2"}`
                 }`}
               />
               <div className="ms-auto flex shrink-0 items-center gap-1.5">
-              {showPicker && (
+              {!mediaMode && showPicker && (
                 <ModelPicker
                   models={models}
                   value={currentKey}
@@ -591,7 +812,17 @@ export default function Chat() {
                   attention={attention}
                 />
               )}
-              {streaming ? (
+              {mediaMode && mediaOptions.length > 0 && (
+                <ModelPicker
+                  models={mediaOptions.map(asPickerModel)}
+                  value={mediaKey}
+                  onChange={(k) => setMediaKeys((m) => ({ ...m, [mode]: k }))}
+                  exhausted={NO_EXHAUSTED}
+                  now={now}
+                  attention={0}
+                />
+              )}
+              {streaming && !mediaMode ? (
                 <button
                   type="button"
                   onClick={stopStreaming}
@@ -600,6 +831,20 @@ export default function Chat() {
                   className="press flex size-10 shrink-0 items-center justify-center rounded-full bg-fg text-bg transition-transform"
                 >
                   <Square size={14} fill="currentColor" aria-hidden />
+                </button>
+              ) : mediaMode ? (
+                <button
+                  type="submit"
+                  disabled={!canGenerate || !convs}
+                  aria-label={confirming ? `אישור: יצירה ב-${q?.credits} קרדיטים` : `יצירה · ${q?.credits ?? "…"} קרדיטים`}
+                  title={confirming ? "הקישו לאישור" : "יצירה"}
+                  data-confirming={confirming || undefined}
+                  className={`press flex h-10 shrink-0 items-center gap-1 rounded-full ps-2.5 pe-3 text-[15px] font-semibold transition-[background-color,color,opacity,transform] disabled:opacity-30 ${
+                    confirming ? "bg-fg text-bg" : "bg-accent text-accent-fg"
+                  }`}
+                >
+                  {confirming ? <Check size={18} strokeWidth={2.5} aria-hidden /> : <ArrowUp size={18} strokeWidth={2.25} aria-hidden />}
+                  <span dir="ltr">{q?.credits ?? "…"}</span>
                 </button>
               ) : (
                 <button

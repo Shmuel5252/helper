@@ -21,7 +21,8 @@
     "e2e:auth": "node tests/auth.e2e.mjs",
     "mock:openart": "node tests/mock-openart.mjs",
     "mock:upstash": "node tests/mock-upstash.mjs",
-    "test:openart": "node tests/openart.int.mjs"
+    "test:openart": "node tests/openart.int.mjs",
+    "e2e:media": "node tests/media.e2e.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.55.0",

@@ -18,10 +18,11 @@ type Props = {
   onRename: (id: string, title: string) => void;
   onTogglePin: (id: string) => void;
   onDelete: (id: string) => void;
+  footer?: string; // e.g. today's generation credits vs. the daily cap
 };
 
 export default function Sidebar(props: Props) {
-  const { conversations, activeId, open, collapsed, isDesktop, onClose, onCollapse, onNew } = props;
+  const { conversations, activeId, open, collapsed, isDesktop, onClose, onCollapse, onNew, footer } = props;
   const panelRef = useRef<HTMLElement>(null);
   const modal = open && !isDesktop;
 
@@ -118,6 +119,11 @@ export default function Sidebar(props: Props) {
             ))
           )}
         </nav>
+        {footer && (
+          <p data-testid="credit-usage" className="shrink-0 border-t border-line px-5 py-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] text-[13px] text-muted">
+            {footer}
+          </p>
+        )}
       </aside>
     </>
   );
