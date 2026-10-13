@@ -155,5 +155,169 @@ await check("disconnect revokes at OpenArt and deletes the tokens", async () => 
   assert.match(await adminPage(admin), /לא מחובר/);
 });
 
+// ---------- Milestone 2: generation API and media proxy ----------
+const api = (path, body) =>
+  req(path, { method: body ? "POST" : "GET", cookie: friend, headers: body ? { "Content-Type": "application/json" } : {}, body: body && JSON.stringify(body) }).then(
+    async (r) => ({ status: r.status, body: await r.json().catch(() => null) }),
+  );
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitDone(id) {
+  for (let i = 0; i < 40; i++) {
+    const s = await api(`/api/media/status?id=${id}`);
+    if (s.body?.status !== "running") return s;
+    await sleep(300); // the browser waits pollAfter (≥4s); the mock finishes in ~1–3s
+  }
+  throw new Error("still running");
+}
+const usage = () => api("/api/media/config").then((r) => r.body.usage);
+const pngDataUrl = `data:image/png;base64,${(await import("node:fs")).readFileSync(new URL("./fixtures/sample.png", import.meta.url)).toString("base64")}`;
+
+await check("config: unavailable while disconnected; generate answers in Hebrew", async () => {
+  const c = await api("/api/media/config");
+  assert.equal(c.body.available, false);
+  const g = await api("/api/media/generate", { kind: "image", key: "lite", prompt: "חתול", credits: 15 });
+  assert.equal(g.status, 503);
+  assert.equal(g.body.error, "יצירת תמונות וסרטונים לא זמינה כרגע.");
+});
+
+await check("media API and proxy require the friend's login", async () => {
+  assert.equal((await req("/api/media/config")).status, 401);
+  assert.equal((await req("/api/media/quote", { method: "POST", body: "{}" })).status, 401);
+  assert.equal((await req("/media/images/x.png")).status, 307);
+});
+
+await check("config after connecting: options without model ids, usage 0 of 200", async () => {
+  const start = await req("/api/admin/openart/connect", { method: "POST", cookie: admin });
+  const approved = await req(start.headers.get("location"));
+  await req(approved.headers.get("location"), { cookie: admin });
+  const c = (await api("/api/media/config")).body;
+  assert.equal(c.available, true);
+  assert.deepEqual(c.image.map((o) => o.key), ["lite", "nb2"]);
+  assert.deepEqual(c.video.map((o) => [o.key, o.modelName]), [["pixverse", "PixVerse V6"], ["veo", "Veo 3.1"]]);
+  assert.ok(!JSON.stringify(c).includes("nano-banana") && !JSON.stringify(c).includes("veo3-1"), "no model ids");
+  assert.deepEqual(c.usage, { spent: 0, cap: 200, remaining: 200 });
+});
+
+await check("quotes: exact credits per option; allowlist rejects unknown keys and raw model ids", async () => {
+  const q = async (kind, key, withImage = false) => (await api("/api/media/quote", { kind, key, withImage })).body;
+  assert.equal((await q("image", "lite")).credits, 15);
+  assert.equal((await q("image", "nb2")).credits, 20);
+  assert.equal((await q("video", "pixverse")).credits, 50);
+  assert.equal((await q("video", "veo")).credits, 80);
+  assert.equal((await q("image", "lite")).remaining, 200);
+  for (const [kind, key] of [["image", "nano-banana-2"], ["image", "pixverse"], ["video", "lite"], ["audio", "lite"], ["image", "__proto__"]]) {
+    const r = await api("/api/media/quote", { kind, key });
+    assert.equal(r.status, 400, `${kind}/${key}`);
+    assert.equal(r.body.error, "האפשרות שנבחרה לא קיימת.");
+  }
+});
+
+let imageUrl = "";
+await check("generate: wrong confirmed price rejected; right one starts a job; polling reaches the result", async () => {
+  const wrong = await api("/api/media/generate", { kind: "image", key: "lite", prompt: "חתול על ספה", credits: 14 });
+  assert.equal(wrong.status, 409);
+  assert.equal(wrong.body.credits, 15);
+  const g = await api("/api/media/generate", { kind: "image", key: "lite", prompt: "חתול על ספה", credits: 15 });
+  assert.equal(g.status, 200, JSON.stringify(g.body));
+  const job = (await state()).jobs.at(-1);
+  assert.deepEqual([job.model, job.mode, job.params], ["nano-banana-2-lite", "text2image", { prompt: "חתול על ספה" }]);
+  assert.equal((await api(`/api/media/status?id=${g.body.id}`)).body.status, "running");
+  const done = await waitDone(g.body.id);
+  assert.equal(done.body.status, "done");
+  assert.match(done.body.url, /^\/media\/images\/h_[\w-]+\.png$/);
+  assert.equal(done.body.credits, 15);
+  imageUrl = done.body.url;
+  assert.equal((await usage()).spent, 15);
+});
+
+await check("media proxy: same-origin image, video with Range, download header, no traversal", async () => {
+  const img = await req(imageUrl, { cookie: friend });
+  assert.equal(img.status, 200);
+  assert.equal(img.headers.get("content-type"), "image/png");
+  const fixture = (await import("node:fs")).readFileSync(new URL("./fixtures/sample.png", import.meta.url));
+  assert.ok(Buffer.from(await img.arrayBuffer()).equals(fixture));
+
+  const g = await api("/api/media/generate", { kind: "video", key: "pixverse", prompt: "גלים בים", credits: 50 });
+  const done = await waitDone(g.body.id);
+  assert.match(done.body.url, /^\/media\/videos\/.+\.webm$/);
+  assert.match(done.body.poster, /^\/media\/images\//);
+  const part = await req(done.body.url, { cookie: friend, headers: { Range: "bytes=0-99" } });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get("content-range"), "bytes 0-99/55155");
+  assert.equal((await part.arrayBuffer()).byteLength, 100);
+  assert.equal(part.headers.get("accept-ranges"), "bytes");
+  const dl = await req(`${done.body.url}?download=1`, { cookie: friend });
+  assert.match(dl.headers.get("content-disposition"), /^attachment; filename=".+\.webm"$/);
+  for (const bad of ["/media/..%2F..%2Fetc%2Fpasswd", "/media/a/../../x", "/media/%2e%2e/x"]) {
+    assert.equal((await req(bad, { cookie: friend })).status, 404, bad);
+  }
+});
+
+await check("image→video and image edit: uploads the reference, sends exactly startFrame / visualReferences", async () => {
+  const q1 = (await api("/api/media/quote", { kind: "video", key: "pixverse", withImage: true })).body.credits;
+  const g1 = await api("/api/media/generate", { kind: "video", key: "pixverse", prompt: "התמונה מתעוררת", credits: q1, image: { source: imageUrl } });
+  assert.equal(g1.status, 200, JSON.stringify(g1.body));
+  let job = (await state()).jobs.at(-1);
+  assert.equal(job.mode, "image2video");
+  assert.deepEqual(Object.keys(job.params.startFrame).sort(), ["id", "label", "type", "url"]);
+  await waitDone(g1.body.id);
+
+  const g2 = await api("/api/media/generate", { kind: "image", key: "lite", prompt: "תוסיף כובע", credits: 15, image: { dataUrl: pngDataUrl } });
+  assert.equal(g2.status, 200, JSON.stringify(g2.body));
+  job = (await state()).jobs.at(-1);
+  assert.equal(job.mode, "image2image");
+  assert.equal(job.params.visualReferences.length, 1);
+  await waitDone(g2.body.id);
+
+  const bad = await api("/api/media/generate", { kind: "image", key: "lite", prompt: "x", credits: 15, image: { source: "https://evil.example/x.png" } });
+  assert.equal(bad.status, 400);
+});
+
+await check("failed and blocked generations: Hebrew errors, credits returned", async () => {
+  const before = (await usage()).spent;
+  const f = await api("/api/media/generate", { kind: "image", key: "lite", prompt: "זה נכשל", credits: 15 });
+  assert.equal((await waitDone(f.body.id)).body.error, "היצירה נכשלה. נסו שוב.");
+  const b = await api("/api/media/generate", { kind: "image", key: "lite", prompt: "תוכן חסום", credits: 15 });
+  assert.equal((await waitDone(b.body.id)).body.error, "הבקשה נחסמה על ידי מסנן התוכן של OpenArt. נסו לנסח אחרת.");
+  assert.equal((await usage()).spent, before, "both refunded");
+});
+
+await check("price change between quote and confirm is rejected with the new price", async () => {
+  await control({ costMultiplier: 2 });
+  const r = await api("/api/media/generate", { kind: "image", key: "lite", prompt: "חתול", credits: 15 });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.credits, 30);
+  assert.equal(r.body.error, "המחיר השתנה. בדקו את המחיר החדש ואשרו שוב.");
+  await control({ costMultiplier: 1 });
+});
+
+await check("not enough credits in the account", async () => {
+  await control({ balance: 10 });
+  const r = await api("/api/media/generate", { kind: "image", key: "lite", prompt: "חתול", credits: 15 });
+  assert.equal(r.status, 402);
+  assert.equal(r.body.error, "אין מספיק קרדיטים בחשבון ה-OpenArt.");
+  await control({ balance: 2800 });
+});
+
+await check("daily cap: refuses before starting anything once 200 credits would be passed", async () => {
+  let { spent } = await usage();
+  while (spent + 80 <= 200) {
+    const g = await api("/api/media/generate", { kind: "video", key: "veo", prompt: "שקיעה", credits: 80 });
+    assert.equal(g.status, 200);
+    spent += 80;
+  }
+  const jobsBefore = (await state()).jobs.length;
+  const over = await api("/api/media/generate", { kind: "video", key: "veo", prompt: "שקיעה", credits: 80 });
+  assert.equal(over.status, 429);
+  assert.equal(over.body.error, "הגעתם לתקרה היומית של 200 קרדיטים. אפשר לנסות שוב מחר.");
+  assert.equal((await state()).jobs.length, jobsBefore, "no job started");
+  assert.ok((await usage()).spent <= 200);
+});
+
+await check("status only for jobs this site started", async () => {
+  assert.equal((await api("/api/media/status?id=h_someone_else")).status, 404);
+  assert.equal((await api("/api/media/status?id=../x")).status, 404);
+});
+
 console.log("\n" + results.join("\n"));
 process.exitCode = results.some((r) => r.startsWith("FAIL")) ? 1 : 0;

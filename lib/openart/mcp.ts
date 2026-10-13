@@ -26,8 +26,8 @@ async function post(payload: Rpc, token: string, sessionId: string | null) {
     "MCP-Protocol-Version": PROTOCOL,
   };
   if (sessionId) headers["Mcp-Session-Id"] = sessionId;
-  const res = await fetch(MCP_URL, { method: "POST", headers, body: JSON.stringify(payload), cache: "no-store" });
-  return res;
+  // Short calls only (status polls, quotes, submits): keeps every request well inside Vercel limits.
+  return fetch(MCP_URL, { method: "POST", headers, body: JSON.stringify(payload), cache: "no-store", signal: AbortSignal.timeout(25_000) });
 }
 
 async function readReply(res: Response, id: number) {
