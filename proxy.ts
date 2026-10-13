@@ -6,6 +6,10 @@ export async function proxy(request: NextRequest) {
   const url = request.nextUrl;
   const isLogin = url.pathname === "/login";
 
+  // Owner pages and the cron endpoint protect themselves (ADMIN_CODE / CRON_SECRET),
+  // independent of the friend's access code.
+  if (/^\/(admin|api\/admin|api\/cron)(\/|$)/.test(url.pathname)) return NextResponse.next();
+
   // No ACCESS_CODE: the gate is deliberately off and the site is open.
   if (!code) return isLogin ? NextResponse.redirect(new URL("/", request.url)) : NextResponse.next();
 

@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "node --test \"lib/*.test.ts\"",
+    "test": "node --test \"lib/*.test.ts\" \"lib/openart/*.test.ts\"",
     "models": "node --env-file-if-exists=.env.local scripts/listModels.ts",
     "mock:nvidia": "node tests/mock-nvidia.mjs",
     "e2e": "node tests/e2e.mjs",
@@ -18,7 +18,10 @@
     "e2e:models": "node tests/models.e2e.mjs",
     "e2e:images": "node tests/images.e2e.mjs",
     "e2e:quota": "node tests/quota.e2e.mjs",
-    "e2e:auth": "node tests/auth.e2e.mjs"
+    "e2e:auth": "node tests/auth.e2e.mjs",
+    "mock:openart": "node tests/mock-openart.mjs",
+    "mock:upstash": "node tests/mock-upstash.mjs",
+    "test:openart": "node tests/openart.int.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.55.0",

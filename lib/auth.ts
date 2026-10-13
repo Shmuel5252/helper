@@ -40,6 +40,16 @@ export async function isValidCode(input: string, code: string | undefined): Prom
   return (await hmac("cmp", input.trim())) === (await hmac("cmp", code));
 }
 
+// Owner-only admin pages (/admin/*) use their own code, separate from the friend's ACCESS_CODE.
+export const ADMIN_COOKIE = "ai_chat_admin";
+export const ADMIN_COOKIE_OPTIONS = { ...SESSION_COOKIE, maxAge: 60 * 60 * 24 * 30 };
+export const adminToken = (code: string) => hmac(code, "ai-chat-admin-v1");
+
+export async function isAdmin(cookie: string | undefined, code = process.env.ADMIN_CODE): Promise<boolean> {
+  if (!cookie || !code) return false;
+  return cookie === (await adminToken(code));
+}
+
 export async function isValidSession(
   cookie: string | undefined,
   code: string | undefined,

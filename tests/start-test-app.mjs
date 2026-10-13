@@ -10,6 +10,15 @@ const env = {
   AI_MODEL: "mock-model",
   AI_BASE_URL: "http://localhost:4010/v1",
   AI_REASONING_EFFORT: "none",
+  // OpenArt against tests/mock-openart.mjs (4020) and tests/mock-upstash.mjs (4030).
+  OPENART_MCP_URL: "http://localhost:4020/mcp",
+  OPENART_CDN_URL: "http://localhost:4020/cdn",
+  KV_REST_API_URL: process.env.TEST_KV_URL ?? "http://localhost:4030",
+  KV_REST_API_TOKEN: "test",
+  OPENART_TOKEN_KEY: Buffer.alloc(32, 7).toString("base64"), // fixed test key
+  ADMIN_CODE: "admin-test",
+  CRON_SECRET: "cron-test",
+  OPENART_DAILY_CREDIT_CAP: "200",
   AI_MODELS: process.env.TEST_AI_MODELS ?? [
     "fast|mock-fast|מהיר|לרוב השאלות|none|1",
     "deep|mock-deep|מעמיק|לשאלות מורכבות, איטי יותר|medium|1",
