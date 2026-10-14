@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 // Starts the built app on :3101 against the mock AI server, with test model options.
 // Env is set here (not in the shell) so the Hebrew labels survive on every OS.
 // Run: npm run build && npm run mock:nvidia & node tests/start-test-app.mjs
@@ -30,7 +33,15 @@ const env = {
   ].join(","),
 };
 
-spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-p", process.env.PORT ?? "3101"], {
+// Output goes to this console and to a log file, so tests can check what the server logs.
+const port = process.env.PORT ?? "3101";
+const LOG_FILE = path.join(os.tmpdir(), `ai-chat-app-${port}.log`);
+const log = fs.createWriteStream(LOG_FILE);
+const app = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-p", port], {
   env,
-  stdio: "inherit",
+  stdio: ["ignore", "pipe", "pipe"],
 });
+for (const out of [app.stdout, app.stderr]) {
+  out.pipe(process.stdout);
+  out.pipe(log);
+}

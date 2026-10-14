@@ -22,7 +22,8 @@
     "mock:openart": "node tests/mock-openart.mjs",
     "mock:upstash": "node tests/mock-upstash.mjs",
     "test:openart": "node tests/openart.int.mjs",
-    "e2e:media": "node tests/media.e2e.mjs"
+    "e2e:media": "node tests/media.e2e.mjs",
+    "test:parse": "node tests/parse.int.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.55.0",
@@ -31,7 +32,8 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "unpdf": "1.8.1"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
