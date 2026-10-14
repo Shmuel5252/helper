@@ -10,6 +10,7 @@ import {
   saveHistory,
   type Conversation,
 } from "./history.ts";
+import { DOC_STORE_CHARS } from "./documents.ts";
 
 class FakeStorage {
   data = new Map<string, string>();
@@ -163,4 +164,17 @@ test("soft cap: keeps at most 100, pruning the oldest unpinned", () => {
   const ids = r.history.conversations.map((c) => c.id);
   assert.ok(ids.includes("c0")); // pinned survives
   assert.ok(!ids.includes("c1") && !ids.includes("c5") && ids.includes("c6"));
+});
+
+test("documents: kept in history for follow-ups, text capped in storage, full size still known", () => {
+  const s = new FakeStorage();
+  const text = "מ".repeat(DOC_STORE_CHARS + 1000);
+  const doc = { name: "דוח.pdf", type: "pdf" as const, size: 12345, text, chars: text.length, pages: 3 };
+  const c = conv("d", 1, { messages: [{ role: "user", content: "סכם את המסמך", doc }] });
+  const r = saveHistory(s, { activeId: "d", conversations: [c] });
+  assert.equal(r.ok, true);
+  assert.equal(r.history.conversations[0].messages[0].doc?.text.length, text.length, "memory keeps the full text");
+  const back = loadHistory(s).conversations[0].messages[0].doc!;
+  assert.equal(back.text.length, DOC_STORE_CHARS);
+  assert.deepEqual([back.name, back.type, back.size, back.chars, back.pages], ["דוח.pdf", "pdf", 12345, text.length, 3]);
 });

@@ -2,14 +2,25 @@
 
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUp, Check, Copy, ImagePlus, LoaderCircle, Menu, Square, SquarePen, X } from "lucide-react";
+import { ArrowUp, Check, Copy, ImagePlus, LoaderCircle, Menu, Paperclip, Square, SquarePen, X } from "lucide-react";
 import { ERROR_MARK, MAX_CHARS, MSG_GENERIC, prepareHistory } from "@/lib/chat";
+import {
+  DEFAULT_DOC_PROMPT,
+  DOC_ACCEPT,
+  DOC_ERRORS,
+  DOC_PRIVACY_NOTE,
+  DOC_SUGGESTIONS,
+  docMarker,
+  pickAttachments,
+  type DocAttachment,
+} from "@/lib/documents";
 import { loadHistory, makeTitle, mediaAsText, newId, saveHistory, type Conversation, type MediaResult, type Msg } from "@/lib/history";
 import { IMAGE_ERRORS, MAX_BODY_BYTES, MAX_IMAGES } from "@/lib/images";
 import type { PublicModel } from "@/lib/models";
 import { ENHANCE_FALLBACK_NOTE } from "@/lib/openart/enhance";
 import type { PublicMediaOption } from "@/lib/openart/media-config";
 import { loadExhausted, markExhausted, type Exhausted } from "@/lib/quota";
+import DocChip from "./DocChip";
 import MediaCard from "./MediaCard";
 import ModelPicker from "./ModelPicker";
 import ModeSwitch, { type Mode } from "./ModeSwitch";
@@ -61,6 +72,7 @@ function getStorage(): Storage | null {
 
 // The model option the user picked last; new conversations start with it.
 const MODEL_KEY = "ai-chat:model";
+const DOC_NOTE_KEY = "ai-chat:doc-note-seen"; // the privacy line shows once
 
 const DESKTOP = "(min-width: 1024px)";
 const subscribeDesktop = (cb: () => void) => {
@@ -77,6 +89,9 @@ export default function Chat() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // A document waiting in the composer (chat mode): parsed is missing while /api/parse runs.
+  const [doc, setDoc] = useState<{ id: string; name: string; size: number; parsed?: DocAttachment } | null>(null);
+  const [docNoteSeen, setDocNoteSeen] = useState(true);
   const [models, setModels] = useState<PublicModel[] | null>(null);
   const [lastKey, setLastKey] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -126,8 +141,13 @@ export default function Chat() {
 
   // Images only for options that accept them; otherwise the attach button is hidden.
   // Generation always accepts one reference image (edit / start frame).
-  const canAttach = mediaMode ? !!mediaCfg?.available : !!models?.find((m) => m.key === currentKey)?.vision;
-  const shown = !canAttach ? [] : mediaMode ? attachments.slice(0, 1) : attachments; // hidden (and not sent) otherwise
+  // Chat mode always attaches documents; images only on options that accept them.
+  const vision = !!models?.find((m) => m.key === currentKey)?.vision;
+  const canAttach = mediaMode ? !!mediaCfg?.available : true;
+  const showImages = mediaMode ? canAttach : vision;
+  const shown = !showImages ? [] : mediaMode ? attachments.slice(0, 1) : attachments; // hidden (and not sent) otherwise
+  const pendingDoc = mediaMode ? null : doc; // kept, but not offered, in image/video mode
+  const docParsing = !!pendingDoc && !pendingDoc.parsed;
   const pending = shown.filter((a): a is Required<Attachment> => !!a.full);
   const processing = shown.length - pending.length;
   const refImage = !mediaMode ? null : sourceRef ? { source: sourceRef, thumb: sourceRef } : pending[0] ? { dataUrl: pending[0].full, thumb: pending[0].thumb } : null;
@@ -252,6 +272,43 @@ export default function Chat() {
     );
   }
 
+  // Chat mode: images or one document per message (see pickAttachments).
+  function addFiles(files: File[]) {
+    const r = pickAttachments(files, { current: attachments.length ? "images" : pendingDoc ? "doc" : null, vision });
+    if (r.error) setToast(r.error);
+    if (r.kind === "images") void addImages(r.files);
+    else if (r.kind === "doc") void attachDoc(r.files[0]);
+  }
+
+  async function attachDoc(file: File) {
+    const id = newId();
+    setDoc({ id, name: file.name, size: file.size }); // a new document replaces a pending one
+    const drop = (error: string) => {
+      setDoc((d) => (d?.id === id ? null : d));
+      setToast(error);
+    };
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/parse", { method: "POST", body: form });
+      if (res.status === 401) return router.replace("/login");
+      const body = await res.json().catch(() => null);
+      if (!res.ok || typeof body?.text !== "string") return drop(body?.error ?? DOC_ERRORS.failed);
+      setDoc((d) => (d?.id === id ? { ...d, parsed: body as DocAttachment } : d));
+    } catch {
+      drop(MSG_NETWORK);
+    }
+  }
+
+  const dismissDocNote = () => {
+    setDocNoteSeen(true);
+    try {
+      getStorage()?.setItem(DOC_NOTE_KEY, "1");
+    } catch {
+      // storage blocked: it just shows again next time
+    }
+  };
+
   useEffect(() => {
     // localStorage only exists in the browser, so history loads after hydration.
     const h = loadHistory(getStorage());
@@ -259,6 +316,7 @@ export default function Chat() {
     setConvs(h.conversations);
     setActiveId(h.activeId);
     setLastKey(getStorage()?.getItem(MODEL_KEY) ?? null);
+    setDocNoteSeen(getStorage()?.getItem(DOC_NOTE_KEY) === "1");
     const t = Date.now();
     setNow(t);
     setExhausted(loadExhausted(getStorage(), t));
@@ -372,14 +430,17 @@ export default function Chat() {
   async function send(raw: string) {
     const text = raw.trim();
     const imgs = pending;
-    if ((!text && !imgs.length) || streaming || !convs || processing) return;
+    const d = pendingDoc?.parsed;
+    if ((!text && !imgs.length && !d) || streaming || !convs || processing || docParsing) return;
 
     const now = Date.now();
     const id = active?.id ?? newId();
     const modelKey = currentKey;
-    const userMsg: Msg = imgs.length
-      ? { role: "user", content: text, images: imgs.map((a) => a.thumb), full: imgs.map((a) => a.full) }
-      : { role: "user", content: text };
+    const userMsg: Msg = d
+      ? { role: "user", content: text || DEFAULT_DOC_PROMPT, doc: d }
+      : imgs.length
+        ? { role: "user", content: text, images: imgs.map((a) => a.thumb), full: imgs.map((a) => a.full) }
+        : { role: "user", content: text };
     const history: Msg[] = [...messages, userMsg];
     const withAnswer: Msg[] = [...history, { role: "assistant", content: "", modelKey }];
     if (active) {
@@ -388,7 +449,7 @@ export default function Chat() {
       // A conversation only exists once its first message is sent.
       const c: Conversation = {
         id,
-        title: makeTitle(text || "תמונה"),
+        title: makeTitle(text || d?.name || "תמונה"),
         createdAt: now,
         updatedAt: now,
         pinned: false,
@@ -400,6 +461,10 @@ export default function Chat() {
     }
     setInput("");
     if (imgs.length) setAttachments([]);
+    if (d) {
+      setDoc(null);
+      if (!docNoteSeen) dismissDocNote();
+    }
     setStreaming(true);
     stickRef.current = true;
 
@@ -421,11 +486,15 @@ export default function Chat() {
           .map((m) =>
             m.media
               ? { role: m.role, content: mediaAsText(m.media) }
-              : { role: m.role, content: m.content, images: (m.full ?? m.images)?.filter((s) => s.startsWith("data:")) },
+              : m.doc
+                ? { role: m.role, content: `${docMarker(m.doc.name)}\n${m.content}` }
+                : { role: m.role, content: m.content, images: (m.full ?? m.images)?.filter((s) => s.startsWith("data:")) },
           ),
-        { vision: canAttach },
+        { vision },
       );
-      const body = JSON.stringify({ messages: payload, modelKey });
+      // The conversation's latest document travels with every request, for follow-up questions.
+      const lastDoc = history.findLast((m) => m.doc)?.doc;
+      const body = JSON.stringify({ messages: payload, modelKey, document: lastDoc && { name: lastDoc.name, text: lastDoc.text } });
       if (body.length > MAX_BODY_BYTES) throw new Error(IMAGE_ERRORS.body);
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -654,7 +723,7 @@ export default function Chat() {
               <h2 className="mb-6 text-[26px] font-semibold tracking-tight">
                 {mode === "image" ? "איזו תמונה ליצור?" : mode === "video" ? "איזה סרטון ליצור?" : "במה אפשר לעזור?"}
               </h2>
-              <div className={`grid gap-2.5 sm:grid-cols-2 ${mediaMode ? "hidden" : ""}`}>
+              <div className={`grid gap-2.5 sm:grid-cols-2 ${mediaMode || pendingDoc ? "hidden" : ""}`}>
                 {SUGGESTIONS.map((s) => (
                   <button
                     key={s}
@@ -674,6 +743,11 @@ export default function Chat() {
               {messages.map((m, i) =>
                 m.role === "user" ? (
                   <div key={i} className="msg-in flex flex-col items-start gap-1.5">
+                    {m.doc && (
+                      <div className="max-w-[85%]">
+                        <DocChip name={m.doc.name} size={m.doc.size} doc={m.doc} />
+                      </div>
+                    )}
                     {!!m.images?.length && (
                       <div className="flex max-w-[85%] flex-wrap gap-1.5">
                         {m.images.map((src, j) => (
@@ -762,6 +836,39 @@ export default function Chat() {
             className="mx-auto max-w-3xl px-3 sm:px-5"
           >
             <div className="rounded-[1.75rem] border border-line bg-surface p-2 shadow-[0_1px_8px_rgb(0_0_0/0.04)] transition-[border-color] focus-within:border-muted/50">
+              {pendingDoc && (
+                <div className="space-y-2 px-1.5 pt-1.5 pb-2.5">
+                  <div className="flex">
+                    <DocChip name={pendingDoc.name} size={pendingDoc.size} doc={pendingDoc.parsed} onRemove={() => setDoc(null)} />
+                  </div>
+                  {!docNoteSeen && (
+                    <p data-testid="doc-privacy" className="flex items-start gap-1.5 px-1 text-[13px] leading-snug text-muted">
+                      <span className="flex-1">{DOC_PRIVACY_NOTE}</span>
+                      <button
+                        type="button"
+                        onClick={dismissDocNote}
+                        aria-label="סגירת ההערה"
+                        className="press -m-1 shrink-0 rounded-full p-1 transition-[background-color,transform] hover:bg-bubble"
+                      >
+                        <X size={14} aria-hidden />
+                      </button>
+                    </p>
+                  )}
+                  <div role="group" aria-label="הצעות לשאלות על המסמך" className="flex flex-wrap gap-1.5">
+                    {DOC_SUGGESTIONS.map((sug) => (
+                      <button
+                        key={sug}
+                        type="button"
+                        disabled={docParsing || streaming}
+                        onClick={() => send(sug)}
+                        className="press rounded-full border border-line px-3 py-1.5 text-[14px] leading-none transition-[background-color,opacity,transform] hover:bg-bubble disabled:opacity-40"
+                      >
+                        {sug}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {(shown.length > 0 || (mediaMode && sourceRef)) && (
                 <div className="flex gap-2.5 px-1.5 pt-1.5 pb-2.5">
                   {mediaMode && sourceRef ? (
@@ -843,15 +950,15 @@ export default function Chat() {
                 <button
                   type="button"
                   onClick={() => {
-                    void loadProcessor().catch(() => {}); // start downloading while the picker is open
+                    if (showImages) void loadProcessor().catch(() => {}); // start downloading while the picker is open
                     fileRef.current?.click();
                   }}
                   disabled={mediaMode ? !!refImage || shown.length > 0 : attachments.length >= MAX_IMAGES}
-                  aria-label="צירוף תמונה"
-                  title="צירוף תמונה"
+                  aria-label={mediaMode ? "צירוף תמונה" : "צירוף קובץ"}
+                  title={mediaMode ? "צירוף תמונה" : vision ? "צירוף תמונה או מסמך" : "צירוף מסמך"}
                   className="press flex size-10 shrink-0 items-center justify-center rounded-full text-muted transition-[background-color,color,opacity,transform] hover:bg-bubble hover:text-fg disabled:opacity-35"
                 >
-                  <ImagePlus size={21} aria-hidden />
+                  {mediaMode ? <ImagePlus size={21} aria-hidden /> : <Paperclip size={20} aria-hidden />}
                 </button>
               )}
               {mediaCfg?.configured && (
@@ -862,13 +969,14 @@ export default function Chat() {
               <input
                 ref={fileRef}
                 type="file"
-                accept="image/*"
+                accept={mediaMode ? "image/*" : `${vision ? "image/*," : ""}${DOC_ACCEPT}`}
                 multiple={!mediaMode}
                 hidden
                 onChange={(e) => {
                   const files = [...(e.target.files ?? [])];
                   e.target.value = ""; // picking the same file again should still fire
-                  void addImages(files);
+                  if (mediaMode) void addImages(files);
+                  else addFiles(files);
                 }}
               />
               <textarea
@@ -893,7 +1001,13 @@ export default function Chat() {
                   }
                 }}
                 placeholder={
-                  mediaMode && refImage ? (mode === "image" ? "מה לשנות בתמונה?" : "איך להניע את התמונה? (לא חובה)") : PLACEHOLDERS[mode]
+                  mediaMode && refImage
+                    ? mode === "image"
+                      ? "מה לשנות בתמונה?"
+                      : "איך להניע את התמונה? (לא חובה)"
+                    : pendingDoc
+                      ? "שאלו משהו על המסמך…"
+                      : PLACEHOLDERS[mode]
                 }
                 aria-label="הודעה"
                 className={`max-h-40 min-w-0 resize-none bg-transparent py-2 leading-6 outline-none placeholder:text-muted ${
@@ -957,7 +1071,7 @@ export default function Chat() {
               ) : (
                 <button
                   type="submit"
-                  disabled={(!input.trim() && !pending.length) || !convs || processing > 0}
+                  disabled={(!input.trim() && !pending.length && !pendingDoc?.parsed) || !convs || processing > 0 || docParsing}
                   aria-label="שליחה"
                   title="שליחה"
                   className="press flex size-10 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg transition-[opacity,transform] disabled:opacity-30"

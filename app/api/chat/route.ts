@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { ERROR_MARK, prepareHistory, type ChatMessage } from "@/lib/chat";
+import { documentContext, readDocumentField } from "@/lib/documents";
 import { hebrewError, isDailyQuota } from "@/lib/errors";
 import { parseQuotaError, quotaResetAt } from "@/lib/quota";
 import { findImageError, IMAGE_ERRORS, MAX_BODY_BYTES } from "@/lib/images";
@@ -50,6 +51,10 @@ export async function POST(request: Request) {
     return errorResponse(500, "האתר עדיין לא הוגדר עד הסוף (חסר מפתח או מודל). פנו למנהל האתר.");
   }
 
+  // The conversation's latest document (if any) goes in the system prompt, so follow-up
+  // questions keep it even after its message leaves the history window.
+  const doc = readDocumentField(body?.document);
+
   const imageError = findImageError(body?.messages);
   if (imageError) return errorResponse(400, imageError);
   const messages = prepareHistory(body?.messages, { vision: entry.vision });
@@ -62,7 +67,7 @@ export async function POST(request: Request) {
     stream = await client.chat.completions.create(
       {
         model: entry.model,
-        messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages.map(toProvider)],
+        messages: [{ role: "system", content: SYSTEM_PROMPT + (doc ? documentContext(doc) : "") }, ...messages.map(toProvider)],
         stream: true,
         temperature: 0.6,
         // Hidden reasoning tokens count toward this limit, so leave room beyond the visible answer.

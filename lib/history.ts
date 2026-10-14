@@ -3,6 +3,8 @@
 // Layout: one versioned key, STORE_KEY = { v: 2, activeId, conversations: Conversation[] }.
 // The pre-history app kept a single Msg[] under LEGACY_KEY; loadHistory() migrates it.
 
+import { storedDoc, type DocAttachment } from "./documents.ts";
+
 export type Msg = {
   role: "user" | "assistant";
   content: string;
@@ -11,6 +13,7 @@ export type Msg = {
   images?: string[]; // user: ~200px JPEG thumbnails (data URLs), persisted
   full?: string[]; // user: the resized images actually sent; memory only, never persisted
   media?: MediaResult; // assistant: an OpenArt image/video generation instead of text
+  doc?: DocAttachment; // user: an attached document's text (persisted capped at DOC_STORE_CHARS)
 };
 
 // A generated image/video. Stores our proxied URL (/media/...) and metadata, never the file.
@@ -148,7 +151,7 @@ export function saveHistory(
     if (!storage) return { ok: false, quotaPruned, history: current };
     try {
       // Full-size images stay in memory only; storage keeps the small thumbnails.
-      storage.setItem(STORE_KEY, JSON.stringify({ v: 2, ...current }, (k, v) => (k === "full" ? undefined : v)));
+      storage.setItem(STORE_KEY, JSON.stringify({ v: 2, ...current }, (k, v) => (k === "full" ? undefined : k === "doc" ? storedDoc(v) : v)));
       return { ok: true, quotaPruned, history: current };
     } catch (e) {
       const next = isQuotaError(e) ? dropOldest(list, history.activeId) : null;

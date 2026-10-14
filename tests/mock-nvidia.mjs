@@ -113,6 +113,10 @@ Please retry in 2h0m0s.`,
 
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     const slow = last.includes("ארוך");
+    // A document in the system prompt (lib/documents.ts documentContext): the answer starts with
+    // what the model received, so tests can check the text arrived (and stayed for follow-ups).
+    const docMatch = textOf(body.messages[0]).match(/<<<DOCUMENT name="([^"]*)">>>\n([\s\S]*?)\n<<<END DOCUMENT>>>/);
+    const docLine = docMatch && !enhancing ? `[מסמך: ${docMatch[1]} · ${docMatch[2].length} תווים · ${docMatch[2].slice(0, 24).replace(/\s+/g, " ")}]\n\n` : "";
     // Prompt enhancement for image/video (system prompt from lib/openart/enhance.ts): answers with a
     // preamble and quotes, like real models sometimes do, so the app's cleanup is exercised.
     const text = enhancing
@@ -133,9 +137,10 @@ Please retry in 2h0m0s.`,
               ? `אני רואה ${lastImages === 1 ? "תמונה אחת" : `${lastImages} תמונות`}. ההוראה: ${last}`
               : (Object.entries(ANSWERS).find(([k]) => last.includes(k))?.[1] ?? `קיבלתי: ${last}`);
 
-    for (let i = 0; i < text.length; i += 6) {
+    const full = docLine + text;
+    for (let i = 0; i < full.length; i += 6) {
       if (res.destroyed) return;
-      res.write(chunk(text.slice(i, i + 6)));
+      res.write(chunk(full.slice(i, i + 6)));
       await sleep(slow ? 40 : 8);
     }
     if (last.includes("ניתוק")) {

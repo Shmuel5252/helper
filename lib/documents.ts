@@ -126,3 +126,7 @@ export function readDocumentField(v: unknown): { name: string; text: string } | 
 
 // How a document message appears in the history sent to the model (the text goes in the context).
 export const docMarker = (name: string) => `[צורף המסמך: ${clean(name)}]`;
+
+// The file picker's filter in chat mode (extensions for phones that send no MIME type).
+export const DOC_ACCEPT =
+  ".pdf,.docx,.txt,.md,.markdown,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv";
