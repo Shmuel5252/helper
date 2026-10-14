@@ -112,7 +112,8 @@ export default function Chat() {
   const [interp, setInterp] = useState<{ sig: string; text: string; note?: string } | null>(null);
   const [interpLoading, setInterpLoading] = useState<string | null>(null);
   const [slowFor, setSlowFor] = useState<string | null>(null); // the reading that passed ~3 s
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null); // images
+  const docRef = useRef<HTMLInputElement>(null); // documents (chat mode)
   const abortRef = useRef<AbortController | null>(null);
   const stickRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -946,19 +947,32 @@ export default function Chat() {
               {/* RTL order: attach · mode · textarea · model chip · send. On narrow screens with the
                   chip or modes, the textarea takes its own row and the buttons sit in a row below it. */}
               <div className="flex flex-wrap items-end gap-1.5">
-              {canAttach && (
+              {/* Two buttons, two inputs: a picker that mixes image/* with documents opens the
+                  photo picker on Android, so documents get their own input with no image types. */}
+              {showImages && (
                 <button
                   type="button"
                   onClick={() => {
-                    if (showImages) void loadProcessor().catch(() => {}); // start downloading while the picker is open
+                    void loadProcessor().catch(() => {}); // start downloading while the picker is open
                     fileRef.current?.click();
                   }}
                   disabled={mediaMode ? !!refImage || shown.length > 0 : attachments.length >= MAX_IMAGES}
-                  aria-label={mediaMode ? "צירוף תמונה" : "צירוף קובץ"}
-                  title={mediaMode ? "צירוף תמונה" : vision ? "צירוף תמונה או מסמך" : "צירוף מסמך"}
+                  aria-label="צירוף תמונה"
+                  title="צירוף תמונה"
                   className="press flex size-10 shrink-0 items-center justify-center rounded-full text-muted transition-[background-color,color,opacity,transform] hover:bg-bubble hover:text-fg disabled:opacity-35"
                 >
-                  {mediaMode ? <ImagePlus size={21} aria-hidden /> : <Paperclip size={20} aria-hidden />}
+                  <ImagePlus size={21} aria-hidden />
+                </button>
+              )}
+              {!mediaMode && (
+                <button
+                  type="button"
+                  onClick={() => docRef.current?.click()}
+                  aria-label="צירוף מסמך"
+                  title="צירוף מסמך (PDF, Word, טקסט, CSV)"
+                  className="press flex size-10 shrink-0 items-center justify-center rounded-full text-muted transition-[background-color,color,opacity,transform] hover:bg-bubble hover:text-fg disabled:opacity-35"
+                >
+                  <Paperclip size={20} aria-hidden />
                 </button>
               )}
               {mediaCfg?.configured && (
@@ -969,7 +983,8 @@ export default function Chat() {
               <input
                 ref={fileRef}
                 type="file"
-                accept={mediaMode ? "image/*" : `${vision ? "image/*," : ""}${DOC_ACCEPT}`}
+                data-testid="image-input"
+                accept="image/*"
                 multiple={!mediaMode}
                 hidden
                 onChange={(e) => {
@@ -977,6 +992,18 @@ export default function Chat() {
                   e.target.value = ""; // picking the same file again should still fire
                   if (mediaMode) void addImages(files);
                   else addFiles(files);
+                }}
+              />
+              <input
+                ref={docRef}
+                type="file"
+                data-testid="doc-input"
+                accept={DOC_ACCEPT}
+                hidden
+                onChange={(e) => {
+                  const files = [...(e.target.files ?? [])];
+                  e.target.value = "";
+                  addFiles(files);
                 }}
               />
               <textarea

@@ -127,7 +127,7 @@ for (const width of [375, 1280]) {
       await textarea.fill(Array.from({ length: 12 }, (_, i) => `שורה ארוכה מספר ${i} עם עוד קצת טקסט`).join("\n"));
       const t = await textarea.boundingBox();
       assert.ok(t.height > 140 && t.height <= 161, `height ${t.height}`);
-      assert.ok(t.width > (mobile ? 280 : 420), `width ${t.width}`); // desktop row also holds the chat/image/video switch
+      assert.ok(t.width > (mobile ? 280 : 380), `width ${t.width}`); // desktop row also holds the mode switch and two attach buttons
       const c = await assertNextToSend();
       assert.ok(c.y + c.height <= (mobile ? 812 : 860), "chip still on screen");
       await shot("composer-long-text");

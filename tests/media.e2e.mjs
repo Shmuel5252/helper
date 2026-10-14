@@ -97,7 +97,7 @@ for (const width of [375, 1280]) {
     await check(`[${tag}] mode switch sits next to the attach button; image mode changes the composer`, async () => {
       await radio("תמונה").waitFor();
       const sw = await page.getByRole("radiogroup", { name: "מה ליצור" }).boundingBox();
-      const at = await page.getByRole("button", { name: /^צירוף (תמונה|קובץ)$/ }).boundingBox();
+      const at = await page.getByRole("button", { name: /^צירוף / }).last().boundingBox(); // the one next to the switch
       assert.ok(at.x > sw.x && at.x - (sw.x + sw.width) < 14, "attach right next to the switch (RTL)");
       await radio("תמונה").click();
       assert.equal(await radio("תמונה").getAttribute("aria-checked"), "true");

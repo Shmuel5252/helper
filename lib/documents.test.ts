@@ -55,6 +55,8 @@ test("images or one document per message: the first kind wins, with a Hebrew not
 test("type and size checks before uploading", () => {
   let r = pickAttachments([f("song.mp3", "audio/mpeg")], { current: null, vision: true });
   assert.deepEqual([r.kind, r.error], [null, DOC_ERRORS.type]);
+  r = pickAttachments([f("ישן.doc", "application/msword")], { current: null, vision: true });
+  assert.deepEqual([r.kind, r.error], [null, DOC_ERRORS.oldWord], "old Word can be picked, then gets a clear message");
   r = pickAttachments([f("a.png", "image/png")], { current: null, vision: false });
   assert.deepEqual([r.kind, r.error], [null, DOC_ERRORS.typeNoImages], "text-only model: images refused, documents offered");
   r = pickAttachments([f("a.png", "image/png"), f("doc.pdf")], { current: null, vision: false });

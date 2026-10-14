@@ -64,7 +64,7 @@ for (const width of [375, 1280]) {
       await page.screenshot({ path: `${OUT}/${name}-${tag}.png` });
     };
     const textarea = page.getByLabel("הודעה");
-    const fileInput = page.locator('input[type="file"]');
+    const fileInput = page.getByTestId("doc-input");
     const chip = page.locator("form [data-testid=doc-chip]");
     const privacy = page.getByTestId("doc-privacy");
     const toast = page.locator('div[role="status"].fade-in.fixed');
@@ -97,11 +97,30 @@ for (const width of [375, 1280]) {
     await page.goto(`${BASE}/?k=${CODE}`);
     await page.getByRole("heading", { name: "במה אפשר לעזור?" }).waitFor();
 
-    await check(`[${tag}] attach button offers documents in chat mode`, async () => {
-      const btn = page.getByRole("button", { name: "צירוף קובץ" });
-      await btn.waitFor();
-      const accept = await fileInput.getAttribute("accept");
-      for (const t of [".pdf", ".docx", ".txt", ".md", ".csv", "image/*"]) assert.ok(accept.includes(t), t);
+    await check(`[${tag}] separate pickers: images only for the image button, documents only for the document button`, async () => {
+      const imageInput = page.getByTestId("image-input");
+      // Each button opens its own input (no capture attribute: the file picker, not the camera).
+      for (const [button, input] of [["צירוף תמונה", imageInput], ["צירוף מסמך", fileInput]]) {
+        const chooser = page.waitForEvent("filechooser");
+        await page.getByRole("button", { name: button }).click();
+        const fc = await chooser;
+        assert.equal(await fc.element().evaluate((el) => el.dataset.testid), await input.getAttribute("data-testid"), button);
+      }
+      assert.equal(await imageInput.getAttribute("accept"), "image/*");
+      assert.equal(
+        await fileInput.getAttribute("accept"),
+        ".pdf,.doc,.docx,.txt,.md,.markdown,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv",
+      );
+      assert.ok(!(await fileInput.getAttribute("accept")).includes("image"), "no image types in the document picker");
+      assert.equal(await fileInput.getAttribute("capture"), null);
+      assert.equal(await imageInput.getAttribute("capture"), null);
+      assert.equal(await fileInput.getAttribute("multiple"), null, "one document per message");
+    });
+
+    await check(`[${tag}] old Word (.doc): can be picked, clear Hebrew message`, async () => {
+      await fileInput.setInputFiles({ name: "ישן.doc", mimeType: "application/msword", buffer: Buffer.from("old word") });
+      await toast.filter({ hasText: /^קובצי Word ישנים \(\.doc\) לא נתמכים/ }).waitFor();
+      await toast.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
     });
 
     await check(`[${tag}] while reading: chip says so, send and suggestions wait`, async () => {
@@ -211,9 +230,10 @@ for (const width of [375, 1280]) {
 
     await check(`[${tag}] images and a document together: the first kind stays, with a note`, async () => {
       await toast.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
-      await fileInput.setInputFiles([FX.txt, FX.png]);
+      await attach(FX.txt);
+      await page.getByTestId("image-input").setInputFiles(FX.png); // then an image, from the image button
       await expectToast(/^אפשר לצרף להודעה תמונות או מסמך, לא את שניהם/);
-      await page.locator("form [data-testid=doc-chip][data-status=ready]").waitFor({ timeout: 15_000 });
+      assert.equal(await chip.count(), 1, "the document stays");
       assert.equal(await page.getByRole("img", { name: /^תמונה מצורפת/ }).count(), 0);
       await page.getByRole("button", { name: "הסרת המסמך" }).click();
     });

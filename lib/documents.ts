@@ -30,6 +30,7 @@ export const DOC_ERRORS = {
   failed: "לא הצלחנו לקרוא את המסמך. ייתכן שהוא פגום או מוגן בסיסמה.",
   mixed: "אפשר לצרף להודעה תמונות או מסמך, לא את שניהם. השארנו את מה שצירפתם קודם.",
   oneDoc: "אפשר לצרף מסמך אחד להודעה. צירפנו את הראשון.",
+  oldWord: "קובצי Word ישנים (.doc) לא נתמכים. שמרו את המסמך כ-DOCX או PDF ונסו שוב.",
 };
 
 const BY_EXT: Record<string, DocType> = { pdf: "pdf", docx: "docx", txt: "txt", md: "md", markdown: "md", csv: "csv" };
@@ -61,7 +62,14 @@ export function pickAttachments<F extends { name: string; type: string; size: nu
 ): { kind: "images" | "doc" | null; files: F[]; error?: string } {
   const kindOf = (f: F) => (isImageFile(f) ? (vision ? "images" : null) : docType(f.name, f.type) ? "doc" : null);
   const usable = files.filter(kindOf);
-  if (!usable.length) return { kind: null, files: [], error: !vision && files.some(isImageFile) ? DOC_ERRORS.typeNoImages : DOC_ERRORS.type };
+  if (!usable.length) {
+    const error = files.some((f) => /\.doc$/i.test(f.name))
+      ? DOC_ERRORS.oldWord
+      : !vision && files.some(isImageFile)
+        ? DOC_ERRORS.typeNoImages
+        : DOC_ERRORS.type;
+    return { kind: null, files: [], error };
+  }
   const kind = current ?? kindOf(usable[0])!;
   let keep = usable.filter((f) => kindOf(f) === kind);
   if (kind === "doc") keep = keep.slice(0, 1);
@@ -127,6 +135,22 @@ export function readDocumentField(v: unknown): { name: string; text: string } | 
 // How a document message appears in the history sent to the model (the text goes in the context).
 export const docMarker = (name: string) => `[צורף המסמך: ${clean(name)}]`;
 
-// The file picker's filter in chat mode (extensions for phones that send no MIME type).
-export const DOC_ACCEPT =
-  ".pdf,.docx,.txt,.md,.markdown,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv";
+// The document picker's filter: documents only, never image/* (with an image type in the list,
+// Android opens the photo picker instead of the file picker). .doc is listed so old Word files
+// can be picked and get a clear "save as DOCX/PDF" message. Extensions and MIME types both,
+// since phones match one or the other.
+export const DOC_ACCEPT = [
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".txt",
+  ".md",
+  ".markdown",
+  ".csv",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+].join(",");

@@ -113,8 +113,8 @@ for (const width of [375, 1280]) {
       await page.screenshot({ path: `${OUT}/${name}-${tag}.png` });
     };
     const textarea = page.getByLabel("הודעה");
-    const attach = page.getByRole("button", { name: "צירוף קובץ" }); // chat mode: images or a document
-    const fileInput = page.locator('input[type="file"]');
+    const attach = page.getByRole("button", { name: "צירוף תמונה" });
+    const fileInput = page.getByTestId("image-input");
     const pendingThumbs = page.getByRole("img", { name: /^תמונה מצורפת/ });
     const toast = page.locator('[role="status"].fade-in');
     const lastAnswer = () => page.locator(".msg-in").last().locator(".md").innerText();
@@ -220,11 +220,11 @@ for (const width of [375, 1280]) {
       await shot("images-after-reload");
     });
 
-    await check(`[${tag}] non-vision option: attach offers documents only and sends no images`, async () => {
+    await check(`[${tag}] non-vision option: no image button, documents only, sends no images`, async () => {
       await attachFiles([fx.png], 1);
       await pick("טקסט בלבד");
-      assert.equal(await attach.count(), 1, "documents can still be attached");
-      assert.ok(!(await fileInput.getAttribute("accept")).includes("image/"), "the picker offers no images");
+      assert.equal(await attach.count(), 0, "no image button");
+      assert.equal(await page.getByRole("button", { name: "צירוף מסמך" }).count(), 1, "documents can still be attached");
       assert.equal(await pendingThumbs.count(), 0, "pending images hidden");
       await send("כמה תמונות למודל טקסט?");
       assert.equal(await lastAnswer(), "images=0 placeholders=2");
