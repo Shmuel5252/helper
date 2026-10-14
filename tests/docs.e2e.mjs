@@ -245,6 +245,17 @@ for (const width of [375, 1280]) {
         await shot("docs-partial");
         await page.getByRole("button", { name: "הסרת המסמך" }).click();
       });
+
+      await check(`[${tag}] daily quota on a document question: says so and points to the model picker`, async () => {
+        await attach(FX.txt); // still on an empty chat here
+        await textarea.fill("בדיקת מכסה יומית על המסמך"); // the mock answers with a daily-quota 429
+        await sendBtn.click();
+        await page.getByRole("button", { name: "עצירה" }).waitFor({ state: "detached", timeout: 20_000 });
+        const alert = page.locator(".msg-in").last().getByRole("alert");
+        assert.equal(await alert.innerText(), "המכסה היומית של המודל הזה נגמרה. החליפו מודל בכפתור ליד השליחה, או נסו שוב מחר.");
+        await shot("docs-daily-quota");
+        await fetch("http://localhost:4010/reset"); // the mock remembers the exhausted model
+      });
     }
 
     await ctx.close();

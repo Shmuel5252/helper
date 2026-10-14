@@ -245,7 +245,7 @@ for (const width of [375, 1280]) {
         await newChat();
         await send("בדיקת מכסה");
         const alert = page.locator(".msg-in").last().getByRole("alert");
-        assert.match(await alert.innerText(), /חכו דקה.*אפשרות אחרת/);
+        assert.match(await alert.innerText(), /חכו דקה.*החליפו מודל/);
       });
 
       await check(`[${tag}] with a single option there is no chip and the composer is one row`, async () => {
@@ -268,7 +268,7 @@ for (const width of [375, 1280]) {
       await check(`[${tag}] daily quota error says so, suggests another option or tomorrow`, async () => {
         await send("בדיקת מכסה יומית");
         const alert = page.locator(".msg-in").last().getByRole("alert");
-        assert.match(await alert.innerText(), /נגמרה המכסה היומית.*אפשרות אחרת.*מחר/);
+        assert.match(await alert.innerText(), /המכסה היומית של המודל הזה נגמרה.*החליפו מודל.*מחר/);
         await shot("daily-quota-error");
       });
     }

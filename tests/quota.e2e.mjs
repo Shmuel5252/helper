@@ -95,7 +95,7 @@ for (const width of [375, 1280]) {
     await check(`[${tag}] daily 429 on the current option: message points to the picker, no automatic switch`, async () => {
       await pick("מעמיק");
       await send("בדיקת מכסה יומית");
-      assert.match(await lastAlert(), /נגמרה המכסה היומית של האפשרות הזו\. בחרו אפשרות אחרת בכפתור ליד השליחה/);
+      assert.match(await lastAlert(), /המכסה היומית של המודל הזה נגמרה\. החליפו מודל בכפתור ליד השליחה, או נסו שוב מחר\./);
       assert.equal(await current(), "מעמיק", "still on the same option");
     });
 
@@ -121,7 +121,7 @@ for (const width of [375, 1280]) {
       assert.equal(await current(), "יסודי");
       assert.equal(await trigger.getAttribute("data-exhausted"), "true");
       await send("שוב שלום");
-      assert.match(await lastAlert(), /נגמרה המכסה היומית/);
+      assert.match(await lastAlert(), /המכסה היומית של המודל הזה נגמרה/);
       assert.equal(await current(), "יסודי");
     });
 

@@ -1,5 +1,5 @@
-import OpenAI, { APIConnectionError, APIError } from "openai";
-import { isDailyQuota } from "@/lib/errors";
+import OpenAI, { APIError } from "openai";
+import { classifyAiError } from "@/lib/errors";
 import type { ModelEntry } from "@/lib/models";
 import {
   cleanEnhanced,
@@ -22,11 +22,13 @@ const CHAIN = promptModels(MODELS, process.env.AI_PROMPT_MODELS);
 const ATTEMPT_MS = Number(process.env.AI_PROMPT_TIMEOUT_MS) || 10_000;
 const TOTAL_MS = 25_000;
 
+// Same classification as the chat (lib/errors.ts): a daily quota is "quota"; a per-minute limit,
+// overload, timeout or dropped connection is "temporary" (worth trying the next model).
 function failureKind(e: unknown, timedOut: boolean): FailureKind {
-  if (isDailyQuota(e)) return "quota";
-  if (timedOut || e instanceof APIConnectionError) return "temporary"; // includes connection timeouts
-  if (e instanceof APIError && (e.status === 429 || !e.status || e.status >= 500)) return "temporary";
-  return "other";
+  if (timedOut) return "temporary";
+  const kind = classifyAiError(e);
+  if (kind === "quota") return "quota";
+  return kind === "rate" || kind === "temporary" || kind === "timeout" || kind === "network" ? "temporary" : "other";
 }
 
 async function translate(entry: ModelEntry, system: string, prompt: string, signal: AbortSignal): Promise<string> {
