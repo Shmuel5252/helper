@@ -22,7 +22,6 @@ export type MediaResult = {
   status: "pending" | "done" | "failed" | "stopped";
   jobId?: string;
   prompt: string; // what the user wrote (usually Hebrew)
-  englishPrompt?: string; // what was sent to OpenArt, after enhancement and the user's edits
   optionKey: string;
   label: string;
   modelName: string;

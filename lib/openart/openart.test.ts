@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decrypt, encrypt } from "./crypto.ts";
 import { accountSummary } from "./account.ts";
-import { cleanEnhanced, enhanceSystemPrompt, fallbackNote, fallbackReason, promptModels } from "./enhance.ts";
 import { israelDay } from "./day.ts";
 
 const KEY = Buffer.alloc(32, 7).toString("base64");
@@ -35,48 +34,4 @@ test("account balance is read from the real account_get shape", () => {
   for (const bad of [null, undefined, "x", {}, { credits: "2800" }, { credits: NaN }, { balance: 5 }]) {
     assert.equal(accountSummary(bad).credits, undefined);
   }
-});
-
-test("prompt enhancement: system prompt per task, literal reading, cleaned answer", () => {
-  const image = enhanceSystemPrompt("image", false);
-  assert.match(image, /AI image generator/);
-  assert.match(image, /under 80 words/);
-  assert.match(image, /Never add brand names/);
-  assert.match(image, /El Al/);
-  assert.match(enhanceSystemPrompt("image", true), /changes the attached image/);
-  assert.match(enhanceSystemPrompt("video", false), /AI video generator/);
-  assert.match(enhanceSystemPrompt("video", true), /first frame/);
-
-  assert.equal(cleanEnhanced('Prompt: "A small airplane flying above the clouds."'), "A small airplane flying above the clouds.");
-  assert.equal(cleanEnhanced("<think>plan it</think>\n  An orange cat\n on a sofa  "), "An orange cat on a sofa");
-  assert.equal(cleanEnhanced("“A red kite”"), "A red kite");
-  assert.equal(cleanEnhanced("<think>never closed"), "");
-  assert.equal(cleanEnhanced("   "), "");
-  assert.equal(cleanEnhanced("x".repeat(3000)).length, 1000);
-});
-
-test("translation models: AI_PROMPT_MODELS order, unknown keys and shared model ids skipped", () => {
-  const entries = [
-    { key: "fast", model: "gemini-flash" },
-    { key: "deep", model: "gemini-pro" },
-    { key: "deep2", model: "gemini-pro" },
-    { key: "lite", model: "gemini-flash-lite" },
-    { key: "alt", model: "gemma" },
-  ];
-  const keys = (raw?: string) => promptModels(entries, raw).map((e) => e.key);
-  assert.deepEqual(keys(undefined), ["alt", "lite", "fast"], "default: models off the main chat quota first");
-  assert.deepEqual(keys(""), ["alt", "lite", "fast"]);
-  assert.deepEqual(keys(" deep , deep2,nope, fast"), ["deep", "fast"]);
-  assert.deepEqual(keys("nope"), ["fast"], "nothing usable: the default option");
-  assert.deepEqual(promptModels([], "alt"), []);
-});
-
-test("fallback note says why: daily quota only when every model ran out", () => {
-  assert.equal(fallbackReason(["quota", "quota"]), "quota");
-  assert.equal(fallbackReason(["quota", "temporary"]), "temporary");
-  assert.equal(fallbackReason(["other", "temporary"]), "temporary");
-  assert.equal(fallbackReason(["other"]), "other");
-  assert.equal(fallbackReason([]), "other", "no key / no models");
-  assert.match(fallbackNote("quota"), /^המכסה היומית לניסוח נגמרה/);
-  assert.match(fallbackNote("temporary"), /^שגיאה זמנית בניסוח/);
 });

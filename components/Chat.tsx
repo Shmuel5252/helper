@@ -2,7 +2,7 @@
 
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUp, Check, Copy, ImagePlus, LoaderCircle, Menu, Paperclip, Square, SquarePen, X } from "lucide-react";
+import { ArrowUp, Check, Copy, ImagePlus, Menu, Paperclip, Square, SquarePen, X } from "lucide-react";
 import { ERROR_MARK, MAX_CHARS, MSG_GENERIC, prepareHistory } from "@/lib/chat";
 import {
   DEFAULT_DOC_PROMPT,
@@ -17,7 +17,6 @@ import {
 import { loadHistory, makeTitle, mediaAsText, newId, saveHistory, type Conversation, type MediaResult, type Msg } from "@/lib/history";
 import { IMAGE_ERRORS, MAX_BODY_BYTES, MAX_IMAGES } from "@/lib/images";
 import type { PublicModel } from "@/lib/models";
-import { ENHANCE_FALLBACK_NOTE } from "@/lib/openart/enhance";
 import type { PublicMediaOption } from "@/lib/openart/media-config";
 import { loadExhausted, markExhausted, type Exhausted } from "@/lib/quota";
 import DocChip from "./DocChip";
@@ -108,10 +107,6 @@ export default function Chat() {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteNonce, setQuoteNonce] = useState(0);
   const [confirmFor, setConfirmFor] = useState<string | null>(null);
-  // The request as the chat model understood it (English, editable), for one (mode, image?, text).
-  const [interp, setInterp] = useState<{ sig: string; text: string; note?: string } | null>(null);
-  const [interpLoading, setInterpLoading] = useState<string | null>(null);
-  const [slowFor, setSlowFor] = useState<string | null>(null); // the reading that passed ~3 s
   const fileRef = useRef<HTMLInputElement>(null); // images
   const docRef = useRef<HTMLInputElement>(null); // documents (chat mode)
   const abortRef = useRef<AbortController | null>(null);
@@ -162,14 +157,7 @@ export default function Chat() {
   const canGenerate = mediaReady && !!q?.credits && !q.error && q.affordable !== false && !overCap && !!mediaPrompt && !processing;
   // Spending needs two taps: the first arms it for exactly this request, any change disarms it.
   const confirmSig = `${quoteSig}|${input}|${refImage?.thumb.slice(-24) ?? ""}`;
-  const interpSig = mediaMode ? `${mode}|${refImage ? 1 : 0}|${mediaPrompt}` : null;
-  const ip = interp && interp.sig === interpSig ? interp : null;
-  const interpreting = !!interpSig && interpLoading === interpSig;
-  const interpSlow = interpreting && slowFor === interpSig;
-  // While the request is being read and until it's confirmed, it shows in the conversation as a
-  // pending bubble; the composer keeps the text so it can still be changed.
-  const pendingPrompt = mediaMode && (interpreting || !!ip) ? input.trim() || mediaPrompt : "";
-  const confirming = canGenerate && confirmFor === confirmSig && !!ip;
+  const confirming = canGenerate && confirmFor === confirmSig;
   const mediaInfo = !mediaCfg?.available
     ? MSG_MEDIA_UNAVAILABLE
     : !q
@@ -184,13 +172,6 @@ export default function Chat() {
   const mediaInfoWarn = !mediaCfg?.available || !!q?.error || q?.affordable === false || overCap;
   // Narrow screens: the textarea gets its own row whenever the buttons row would be crowded.
   const twoRow = showPicker || !!mediaCfg?.configured;
-
-  useEffect(() => {
-    if (!interpreting) return;
-    const sig = interpSig;
-    const t = setTimeout(() => setSlowFor(sig), 3000);
-    return () => clearTimeout(t);
-  }, [interpreting, interpSig]);
 
   useEffect(() => {
     if (!quoteSig) return;
@@ -393,12 +374,9 @@ export default function Chat() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Also when the pending bubble appears and when its reading arrives (the composer grows).
-  const hasPending = !!pendingPrompt;
-  const hasReading = !!ip;
   useEffect(() => {
     if (stickRef.current) window.scrollTo({ top: document.documentElement.scrollHeight });
-  }, [messages, hasPending, hasReading]);
+  }, [messages]);
 
   // Auto-grow the textarea; CSS max-height caps it at 6 lines.
   useEffect(() => {
@@ -556,33 +534,11 @@ export default function Chat() {
   async function generateMedia() {
     if (!canGenerate || !mediaOption || !q?.credits || !convs) return; // canGenerate implies an image/video mode
     if (!confirming) {
-      // First tap: show how the request was understood (English, editable) and arm the price.
-      if (!ip) {
-        const sig = interpSig!;
-        setInterpLoading(sig);
-        let next = { sig, text: mediaPrompt, note: ENHANCE_FALLBACK_NOTE as string | undefined };
-        try {
-          const res = await fetch("/api/media/enhance", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ kind: mode, prompt: mediaPrompt, withImage: !!refImage }),
-          });
-          if (res.status === 401) return router.replace("/login");
-          const body = await res.json().catch(() => null);
-          if (res.ok && typeof body?.prompt === "string") next = { sig, text: body.prompt, note: body.note };
-        } catch {
-          // offline: keep the original prompt with the note
-        } finally {
-          setInterpLoading(null);
-        }
-        setInterp(next);
-      }
+      // First tap: show the price as a confirmation.
       setConfirmFor(confirmSig);
       return;
     }
     setConfirmFor(null);
-    const englishPrompt = ip!.text.trim() || mediaPrompt;
-    setInterp(null);
     const kind = mode;
     const credits = q.credits;
     const ref = refImage;
@@ -593,7 +549,6 @@ export default function Chat() {
       kind,
       status: "pending",
       prompt: mediaPrompt,
-      englishPrompt,
       optionKey: mediaOption.key,
       label: mediaOption.label,
       modelName: mediaOption.modelName,
@@ -620,7 +575,7 @@ export default function Chat() {
         body: JSON.stringify({
           kind,
           key: mediaOption.key,
-          prompt: englishPrompt,
+          prompt: mediaPrompt, // exactly as the user wrote it
           credits,
           image: ref ? (ref.source ? { source: ref.source } : { dataUrl: ref.dataUrl }) : null,
         }),
@@ -719,7 +674,7 @@ export default function Chat() {
         </header>
 
         <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 sm:px-6">
-          {convs && messages.length === 0 && !pendingPrompt && (
+          {convs && messages.length === 0 && (
             <div className="my-auto py-10">
               <h2 className="mb-6 text-[26px] font-semibold tracking-tight">
                 {mode === "image" ? "איזו תמונה ליצור?" : mode === "video" ? "איזה סרטון ליצור?" : "במה אפשר לעזור?"}
@@ -739,7 +694,7 @@ export default function Chat() {
             </div>
           )}
 
-          {(messages.length > 0 || !!pendingPrompt) && (
+          {messages.length > 0 && (
             <div key={activeId} className="space-y-7 pt-3 pb-8" aria-live="polite">
               {messages.map((m, i) =>
                 m.role === "user" ? (
@@ -810,17 +765,6 @@ export default function Chat() {
                     )}
                   </div>
                 ),
-              )}
-              {pendingPrompt && (
-                <div data-testid="pending-prompt" className="msg-in flex flex-col items-start gap-1">
-                  <div
-                    dir="auto"
-                    className="max-w-[85%] rounded-3xl border border-dashed border-muted/40 bg-bubble/60 px-4 py-2.5 wrap-break-word whitespace-pre-wrap text-fg/80"
-                  >
-                    {pendingPrompt}
-                  </div>
-                  <span className="px-2 text-[12px] text-muted">{interpreting ? "מנסחים…" : "ממתין לאישור"}</span>
-                </div>
               )}
             </div>
           )}
@@ -905,37 +849,6 @@ export default function Chat() {
                       </div>
                     ))
                   )}
-                </div>
-              )}
-              {mediaMode && (ip || interpreting) && (
-                <div className="px-2 pb-1.5">
-                  <label htmlFor="interp" className="block text-[13px] text-muted">
-                    כך הבנו את הבקשה
-                  </label>
-                  {ip ? (
-                    <textarea
-                      id="interp"
-                      dir="auto"
-                      rows={3}
-                      value={ip.text}
-                      onChange={(e) => setInterp({ ...ip, text: e.target.value })}
-                      maxLength={2000}
-                      className="mt-1 block w-full resize-none rounded-xl bg-bubble px-3 py-2 text-[14px] leading-5 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                    />
-                  ) : (
-                    <div role="status" data-testid="interp-skeleton" className="mt-1 rounded-xl bg-bubble px-3 py-2.5">
-                      <span className="sr-only">מנסחים את הבקשה…</span>
-                      <div aria-hidden className="space-y-2">
-                        <div className="shimmer h-3 w-11/12 rounded-full" />
-                        <div className="shimmer h-3 w-3/4 rounded-full" />
-                      </div>
-                      <p aria-hidden className="mt-2 text-[13px] text-muted">
-                        מנסחים את הבקשה…
-                      </p>
-                    </div>
-                  )}
-                  {interpSlow && <p className="mt-1 text-[13px] text-muted">זה לוקח רגע…</p>}
-                  {ip?.note && <p className="mt-1 text-[13px] text-warn">{ip.note}</p>}
                 </div>
               )}
               {mediaMode && (
@@ -1077,22 +990,15 @@ export default function Chat() {
               ) : mediaMode ? (
                 <button
                   type="submit"
-                  disabled={!canGenerate || !convs || interpreting}
+                  disabled={!canGenerate || !convs}
                   aria-label={confirming ? `אישור: יצירה ב-${q?.credits} קרדיטים` : `יצירה · ${q?.credits ?? "…"} קרדיטים`}
                   title={confirming ? "הקישו לאישור" : "יצירה"}
                   data-confirming={confirming || undefined}
-                  aria-busy={interpreting || undefined}
-                  className={`press flex h-10 shrink-0 items-center gap-1 rounded-full ps-2.5 pe-3 text-[15px] font-semibold transition-[background-color,color,opacity,transform] ${interpreting ? "cursor-progress" : "disabled:opacity-30"} ${
+                  className={`press flex h-10 shrink-0 items-center gap-1 rounded-full ps-2.5 pe-3 text-[15px] font-semibold transition-[background-color,color,opacity,transform] disabled:opacity-30 ${
                     confirming ? "bg-fg text-bg" : "bg-accent text-accent-fg"
                   }`}
                 >
-                  {interpreting ? (
-                    <LoaderCircle size={18} strokeWidth={2.5} aria-hidden className="animate-spin" />
-                  ) : confirming ? (
-                    <Check size={18} strokeWidth={2.5} aria-hidden />
-                  ) : (
-                    <ArrowUp size={18} strokeWidth={2.25} aria-hidden />
-                  )}
+                  {confirming ? <Check size={18} strokeWidth={2.5} aria-hidden /> : <ArrowUp size={18} strokeWidth={2.25} aria-hidden />}
                   <span dir="ltr">{q?.credits ?? "…"}</span>
                 </button>
               ) : (

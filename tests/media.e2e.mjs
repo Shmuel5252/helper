@@ -79,7 +79,6 @@ for (const width of [375, 1280]) {
     };
     const textarea = page.getByLabel("הודעה");
     const info = page.getByTestId("media-info");
-    const understood = page.getByLabel("כך הבנו את הבקשה");
     const radio = (name) => page.getByRole("radio", { name });
     const goButton = page.locator("form button[type=submit]");
     const lastCard = () => page.locator("[data-media-status]").last();
@@ -114,21 +113,13 @@ for (const width of [375, 1280]) {
       await page.waitForFunction(() => document.querySelector("form button[type=submit]")?.dataset.confirming === "true");
       assert.match(await info.innerText(), /הקישו שוב לאישור/);
       assert.equal(generateCalls.length, 0, "nothing spent on the first tap");
-      // The chat model's English reading, cleaned of its preamble, quotes and <think>.
-      assert.equal(await understood.inputValue(), "EN(image) mock-text: חתול כתום על ספה");
-      assert.equal(await understood.getAttribute("dir"), "auto");
       await shot("media-confirm");
       await textarea.fill("חתול כתום על ספה ירוקה");
       assert.equal(await goButton.getAttribute("data-confirming"), null, "changed text disarms");
-      assert.equal(await understood.count(), 0, "and hides the old reading");
     });
 
     await check(`[${tag}] image result: progress card, then the image from our own domain, label with cost`, async () => {
-      await goButton.click();
-      await understood.waitFor();
-      await understood.fill("An orange cat sleeping on a green sofa, soft window light"); // the user fixes the reading
-      assert.equal(await goButton.getAttribute("data-confirming"), "true", "editing the English keeps it armed");
-      await goButton.click();
+      await confirmAndGo();
       await waitCard("pending");
       assert.match(await lastCard().innerText(), /יוצר תמונה…/);
       await waitCard("done");
@@ -137,11 +128,12 @@ for (const width of [375, 1280]) {
       await page.waitForFunction(() => document.querySelector("[data-media-status=done] img")?.naturalWidth > 0);
       assert.equal(await lastCard().getByTestId("media-label").innerText(), "תמונה · חסכוני · 15 קרדיטים");
       assert.equal(generateCalls.length, 1);
-      assert.equal((await oaState()).jobs.at(-1).params.prompt, "An orange cat sleeping on a green sofa, soft window light");
+      // Sent to OpenArt exactly as typed: no rewriting or translation in between.
+      assert.equal((await oaState()).jobs.at(-1).params.prompt, "חתול כתום על ספה ירוקה");
       const saved = JSON.parse(await page.evaluate(() => localStorage.getItem("ai-chat:v2")));
       const media = saved.conversations[0].messages.find((m) => m.media)?.media;
       assert.equal(media?.prompt, "חתול כתום על ספה ירוקה");
-      assert.equal(media?.englishPrompt, "An orange cat sleeping on a green sofa, soft window light");
+      assert.equal("englishPrompt" in media, false);
       await shot("media-image");
     });
 
@@ -231,94 +223,10 @@ for (const width of [375, 1280]) {
       assert.match(await page.locator(".msg-in").last().innerText(), /model=mock-fast/);
     });
 
-    await check(`[${tag}] slow translation looks alive: pending bubble, shimmer, spinner, "זה לוקח רגע…"`, async () => {
-      await radio("תמונה").click();
-      await textarea.fill("צב הולך לאט בגינה"); // "לאט": the mock answers after 4.5 s
-      await page.waitForFunction(() => /^15 קרדיטים/.test(document.querySelector("[data-testid=media-info]")?.textContent ?? ""));
-      const before = generateCalls.length;
-      await goButton.click();
-      const bubble = page.getByTestId("pending-prompt");
-      await bubble.waitFor({ timeout: 1000 });
-      assert.match(await bubble.innerText(), /צב הולך לאט בגינה[\s\S]*מנסחים…/);
-      assert.equal(await textarea.inputValue(), "צב הולך לאט בגינה", "composer keeps the text");
-      await page.getByTestId("interp-skeleton").waitFor({ timeout: 1000 });
-      assert.equal(await page.locator(".shimmer").first().evaluate((e) => getComputedStyle(e).animationName), "shimmer");
-      assert.equal(await goButton.getAttribute("aria-busy"), "true");
-      assert.equal(await goButton.locator("svg").getAttribute("class").then((c) => c.includes("animate-spin")), true);
-      // Busy, not faded (it may still be finishing the fade-in from when the text was typed).
-      await page.waitForFunction(() => getComputedStyle(document.querySelector("form button[type=submit]")).opacity === "1", null, { timeout: 1000 });
-      assert.equal(await goButton.evaluate((b) => b.className.includes("disabled:opacity")), false);
-      assert.equal(await page.getByText("זה לוקח רגע…").count(), 0, "not yet");
-      await page.getByText("זה לוקח רגע…").waitFor({ timeout: 4000 });
-      await shot("media-enhance-slow");
-      await understood.waitFor({ timeout: 10_000 });
-      assert.equal(await understood.inputValue(), "EN(image) mock-text: צב הולך לאט בגינה");
-      assert.equal(await page.getByText("זה לוקח רגע…").count(), 0);
-      assert.match(await bubble.innerText(), /ממתין לאישור/);
-      assert.equal(await goButton.getAttribute("aria-busy"), null);
-      assert.equal(await goButton.getAttribute("data-confirming"), "true", "armed as before: one more tap spends");
-      assert.equal(generateCalls.length, before);
-      await textarea.fill("");
-      assert.equal(await bubble.count(), 0, "cleared with the text");
-      await radio("צ׳אט").click();
-    });
-
     if (tag === "375-light") {
-      // First tap on a new text → the reading shown in the box (and the note under it, if any).
-      async function readingOf(text) {
-        await textarea.fill(text);
-        await page.waitForFunction(() => /^15 קרדיטים/.test(document.querySelector("[data-testid=media-info]")?.textContent ?? ""));
-        await goButton.click();
-        await understood.waitFor({ timeout: 25_000 });
-        await page.waitForFunction(() => document.querySelector("form button[type=submit]")?.dataset.confirming === "true");
-        return understood.inputValue();
-      }
-      const NOTE_TEMP = "שגיאה זמנית בניסוח, אז נשלח את התיאור כפי שכתבתם.";
-      const NOTE_QUOTA = "המכסה היומית לניסוח נגמרה, אז נשלח את התיאור כפי שכתבתם.";
-
-      await check(`[${tag}] translation: first model out of daily quota → the next one translates`, async () => {
-        await radio("תמונה").click();
-        assert.equal(await readingOf("מכסת ניסוח: ציפור על ענף"), "EN(image) mock-deep: מכסת ניסוח: ציפור על ענף");
-        assert.equal(await page.getByText(/אז נשלח את התיאור/).count(), 0, "no fallback note");
-      });
-
-      await check(`[${tag}] translation: timeout, then overload (503) → the third model translates`, async () => {
-        const t0 = Date.now();
-        assert.equal(await readingOf("עומס: ציפור על ענף"), "EN(image) mock-fast: עומס: ציפור על ענף");
-        assert.ok(Date.now() - t0 > 5500, "waited out the first model's attempt timeout");
-      });
-
-      await check(`[${tag}] translation: every model out of daily quota → original prompt, quota note`, async () => {
-        const before = generateCalls.length;
-        assert.equal(await readingOf("כל המכסות: מטוס מעל העננים"), "כל המכסות: מטוס מעל העננים");
-        await page.getByText(NOTE_QUOTA).waitFor();
-        assert.equal(generateCalls.length, before, "nothing spent");
-        await shot("media-enhance-quota");
-      });
-
-      await check(`[${tag}] translation: temporary error everywhere → original prompt, "temporary" note`, async () => {
-        assert.equal(await readingOf("מטוס על רקע מכסה עננים"), "מטוס על רקע מכסה עננים"); // "מכסה": 429 rate limit
-        await page.getByText(NOTE_TEMP).waitFor();
-        assert.equal(await goButton.getAttribute("data-confirming"), "true", "still possible to go on");
-        await shot("media-enhance-fallback");
-      });
-
-      await check(`[${tag}] reduced motion: the skeleton and spinner stand still`, async () => {
-        await page.emulateMedia({ reducedMotion: "reduce" });
-        await textarea.fill("צב הולך לאט בגינה");
-        await page.waitForFunction(() => /^15 קרדיטים/.test(document.querySelector("[data-testid=media-info]")?.textContent ?? ""));
-        await goButton.click();
-        const anim = await page.locator(".shimmer").first().evaluate((e) => getComputedStyle(e).animationDuration);
-        const spin = await goButton.locator("svg").evaluate((e) => getComputedStyle(e).animationDuration);
-        assert.equal(anim, "0.001s");
-        assert.equal(spin, "0.001s");
-        await understood.waitFor({ timeout: 15_000 });
-        await page.emulateMedia({ reducedMotion: "no-preference" });
-        await textarea.fill("");
-      });
-
       await check(`[${tag}] cancel before the job id arrives: stays stopped, resume follows it`, async () => {
         await control({ generateDelayMs: 1500 });
+        await radio("תמונה").click();
         await textarea.fill("ירח מעל הרים");
         await page.waitForFunction(() => /^15 קרדיטים/.test(document.querySelector("[data-testid=media-info]")?.textContent ?? ""));
         await confirmAndGo();

@@ -22,8 +22,6 @@ const env = {
   ADMIN_CODE: "admin-test",
   CRON_SECRET: "cron-test",
   OPENART_DAILY_CREDIT_CAP: "200",
-  AI_PROMPT_MODELS: "text,deep,fast", // translation order for image/video prompts (mock-text first)
-  AI_PROMPT_TIMEOUT_MS: "6000", // per attempt; the mock's "עומס" case outlasts it
   AI_MODELS: process.env.TEST_AI_MODELS ?? [
     "fast|mock-fast|מהיר|לרוב השאלות|none|1",
     "deep|mock-deep|מעמיק|לשאלות מורכבות, איטי יותר|medium|1",
