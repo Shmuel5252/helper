@@ -8,6 +8,7 @@ import type { ArchiveConversation, ArchiveTranscript } from '@/lib/archive/types
 import ArchiveWorkspace from '@/components/ArchiveWorkspace';
 import { browserHealth } from '@/lib/archive/browser-jobs';
 import { falSelected, falReady } from '@/lib/archive/fal-jobs';
+import {backfillImageArchive} from '@/lib/realistic-archive';
 export const metadata={title:'הארכיון שלי'};
 
 async function Panel({searchParams}:{searchParams:Promise<Record<string,string|string[]|undefined>>}){
@@ -24,6 +25,7 @@ async function Panel({searchParams}:{searchParams:Promise<Record<string,string|s
   const query=typeof params.q==='string'?params.q.trim().slice(0,120):'';
   let list:ArchiveConversation[]=[];let data:ArchiveTranscript|null=null;let error=false;
   try {
+    await backfillImageArchive();
     list=await db<ArchiveConversation[]>('archive_conversations',`order=updated_at.desc&limit=50&offset=${offset}${query?`&title=ilike.*${encodeURIComponent(query.replace(/[%*_]/g,''))}*`:''}`);
     if(uuid(params.id))data=await transcript(params.id);
   }catch{error=true;}

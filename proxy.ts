@@ -10,7 +10,7 @@ export async function proxy(request: NextRequest) {
   // independent of the friend's access code.
   if (/^\/(admin|api\/admin|api\/cron)(\/|$)/.test(url.pathname)) return NextResponse.next();
   // This endpoint requires its own dedicated worker credential, never the access code.
-  if (url.pathname === '/api/worker/gemini') return NextResponse.next();
+  if (url.pathname === '/api/worker/gemini' || url.pathname === '/api/worker/images') return NextResponse.next();
   // fal callbacks authenticate their signature and bind the provider request ID.
   if (url.pathname === '/api/fal/webhook') return NextResponse.next();
   // Private files enforce their own per-device or owner-admin authorization.

@@ -11,7 +11,7 @@ export async function findTurn(id:string) {
   return rows[0];
 }
 export async function refreshTurn(turn:ArchiveTurn):Promise<ArchiveTurn> {
-  if(turn.model_key.startsWith('chat:'))return turn;
+  if(turn.model_key.startsWith('chat:')||turn.model_key==='realistic-image')return turn;
   if(modelFor(turn.model_key)?.provider==='fal')return refreshFal(turn);
   if(modelFor(turn.model_key)?.provider==='account')return refreshBrowser(turn);
   if(!['starting','running'].includes(turn.status))return turn;
@@ -22,6 +22,7 @@ export async function refreshTurn(turn:ArchiveTurn):Promise<ArchiveTurn> {
   return rows[0]??await findTurn(turn.id);
 }
 export async function startTurn(owner:string,input:TurnInput):Promise<ArchiveTurn> {
+  if(modelFor(input.modelKey)?.kind==='image')throw new ArchiveError('תמונות נוצרות באמצעות Realistic Vision. רעננו את הדף ובחרו תמונות.',409);
   if(modelFor(input.modelKey)?.provider==='fal'){
     await conversation(input.conversationId,owner);
     return startFal(owner,input);

@@ -22,7 +22,7 @@ export default function ArchiveMessages({turns,assets,onReuse,updates,onRetry,re
       {t.assets.map(id=>{const a=file(id);return a?renderFile(a):null;})}
     </div>
     <div className="min-w-0 px-1">
-      <p className="mb-2 text-xs text-muted">{modelFor(t.model_key)?.label ?? (t.model_key.startsWith('chat:')?'צ׳אט':'Gemini')}</p>
+      <p className="mb-2 text-xs text-muted">{t.model_key==='realistic-image'?'Realistic Vision V5.1':modelFor(t.model_key)?.label ?? (t.model_key.startsWith('chat:')?'צ׳אט':'Gemini')}</p>
       {t.output.map((o,i)=>o.type==='text'?<Markdown key={i} text={o.text}/>:file(o.assetId)?renderFile(file(o.assetId)!):null)}
       {!(t.status==='failed'&&t.output.some(o=>o.type==='text'))&&(updates ? (()=>{const state=progressState(t.status,updates.connected,updates.updatedAt,updates.now);return state?<GenerationProgress kind={modelFor(t.model_key)?.kind??'chat'} state={state} stale={updatesStale(updates.connected,updates.updatedAt,updates.now)}/>:null;})() : (t.status==='starting'||t.status==='running')&&<GenerationProgress kind={modelFor(t.model_key)?.kind??'chat'}/>)}
       {t.error&&!(updates&&t.status==='uncertain'&&t.error==='Gemini לא השלים את היצירה. אפשר לנסות שוב מאוחר יותר.')&&<p role="alert" className="mt-3 text-danger">{t.error}</p>}

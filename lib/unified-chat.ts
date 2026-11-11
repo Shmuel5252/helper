@@ -23,7 +23,11 @@ export function transcriptConversation(data:ArchiveTranscript):Conversation {
   for(const t of data.turns){
     const images=data.assets.filter(a=>t.assets.includes(a.id)&&a.mime.startsWith('image/')).map(a=>`/api/gemini/assets/${a.id}`);
     messages.push({role:'user',content:t.input,archiveTurnId:t.id,...(images.length?{images}:{})});
-    if(['account-image','account-video','fal-image-v1','fal-video-v1'].includes(t.model_key))messages.push({role:'assistant',content:'',media:{kind:t.model_key.includes('video')?'video':'image',status:'pending',provider:t.model_key.startsWith('fal-')?'fal':'account',conversationId:t.conversation_id,jobId:t.id,prompt:t.input,optionKey:t.model_key,label:'',modelName:'',credits:0,...mediaPatch(t)}});
+    if(t.model_key==='realistic-image'){
+      const result=t.output.find(o=>o.type==='image');
+      messages.push({role:'assistant',content:'',privateImage:true,media:{kind:'image',status:'pending',provider:'realistic',conversationId:t.conversation_id,jobId:t.id,prompt:t.input,originalRequest:t.input,settings:result&&'realistic'in result?result.realistic?.settings:undefined,optionKey:'generate_image',label:'Realistic Vision',modelName:'Realistic Vision V5.1',credits:0,...mediaPatch(t)}});
+    }
+    else if(['account-image','account-video','fal-image-v1','fal-video-v1'].includes(t.model_key))messages.push({role:'assistant',content:'',media:{kind:t.model_key.includes('video')?'video':'image',status:'pending',provider:t.model_key.startsWith('fal-')?'fal':'account',conversationId:t.conversation_id,jobId:t.id,prompt:t.input,optionKey:t.model_key,label:'',modelName:'',credits:0,...mediaPatch(t)}});
     else messages.push({role:'assistant',content:t.output.filter(o=>o.type==='text').map(o=>'text'in o?o.text:'').join('\n'),...(t.error?{error:t.error}:{})});
   }
   return {id:data.conversation.id,archiveId:data.conversation.id,title:data.conversation.title,createdAt:Date.parse(data.conversation.created_at),updatedAt:Date.parse(data.conversation.updated_at),pinned:false,messages};

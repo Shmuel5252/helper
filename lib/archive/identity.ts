@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { createHash, randomBytes } from 'node:crypto';
 import { ADMIN_COOKIE, isAdmin } from '@/lib/auth';
 import { ArchiveError } from './validation';
+import {validImageOrigin} from '../realistic-image';
 
 const COOKIE = 'ai_chat_device';
 export async function deviceOwner(create=false): Promise<string> {
@@ -17,7 +18,5 @@ export async function deviceOwner(create=false): Promise<string> {
 }
 export async function admin() { return isAdmin((await cookies()).get(ADMIN_COOKIE)?.value); }
 export function sameOrigin(request:Request) {
-  const origin=request.headers.get('origin');
-  if (origin && origin!==new URL(request.url).origin) throw new ArchiveError('בקשה ממקור לא מורשה.',403);
-  if (request.headers.get('sec-fetch-site')==='cross-site') throw new ArchiveError('בקשה ממקור לא מורשה.',403);
+  if(!validImageOrigin(request))throw new ArchiveError('בקשה ממקור לא מורשה.',403);
 }

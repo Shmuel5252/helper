@@ -4,6 +4,7 @@ import {requestJson as api} from './gemini-progress';
 import {archiveId, conversationArchiveId, isAnswerArchived} from './unified-chat';
 export const post=(body:unknown):RequestInit=>({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 export async function ensureChatArchive(c:Conversation){
+  if(c.localOnly)throw Error('השיחה כוללת תמונות מקומיות ונשמרת במכשיר בלבד.');
   const id=await conversationArchiveId(c);
   await api('/api/gemini/conversations',post({id,title:c.title}));
   return id;
@@ -18,7 +19,8 @@ export async function archiveImage(cid:string,url:string):Promise<string>{
     const transcript=await api<ArchiveTranscript>(`/api/gemini/conversations/${cid}`);
     if(transcript.assets.some(a=>a.id===match[1]))return match[1];
   }
-  if(!url.startsWith('data:image/')&&!url.startsWith('/media/')&&!match)throw Error('קובץ לא תקין.');
+  const generated=/^\/api\/images\/jobs\/[a-f0-9-]{36}\/file$/i.test(url);
+  if(!url.startsWith('data:image/')&&!url.startsWith('/media/')&&!match&&!generated)throw Error('קובץ לא תקין.');
   const r=await fetch(url);if(!r.ok)throw Error('לא הצלחנו לשמור את הקובץ בארכיון. השיחה נשארה במכשיר.');
   const blob=await r.blob();
   return archiveFile(cid,new File([blob],blob.type.startsWith('video/')?'video.mp4':'image.jpg',{type:blob.type}));
@@ -37,6 +39,11 @@ export async function preserveChat(c:Conversation){
   for(let i=0;i<c.messages.length;i++){
     const user=c.messages[i];if(user.role!=='user')continue;
     const answer=c.messages[i+1]?.role==='assistant'?c.messages[i+1]:undefined;
+    if(answer?.media?.provider==='realistic'){
+      if(answer.media.jobId&&!answer.media.submission)await api(`/api/images/jobs/${answer.media.jobId}/archive`,post({conversationId:cid}));
+      continue;
+    }
+    if(user.privateImage)continue;
     const tid=user.archiveTurnId??answer?.media?.jobId??await archiveId(c.id+':'+i);
     // Legacy OpenArt job ids are not archive UUIDs.
     const id=/^[a-f0-9-]{36}$/i.test(tid)?tid:await archiveId(c.id+':'+i);

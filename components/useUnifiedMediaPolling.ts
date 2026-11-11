@@ -9,13 +9,13 @@ import {mediaPatch} from '@/lib/unified-chat';
 export function useMediaPolling(convs:Conversation[]|null,update:(id:string,patch:Partial<MediaResult>)=>void,onSettled:()=>void){
   const current=useRef({convs,update,onSettled});
   useEffect(()=>{current.current={convs,update,onSettled};});
-  const key=(convs??[]).flatMap(c=>c.messages).filter(m=>m.media?.jobId&&(!m.media.provider||m.media.conversationId)&&(m.media.status==='pending'||!!m.media.provider&&m.media.status==='stopped')).map(m=>m.media!.jobId).sort().join('|');
+  const key=(convs??[]).flatMap(c=>c.messages).filter(m=>m.media?.provider!=='realistic'&&m.media?.jobId&&(!m.media.provider||m.media.conversationId)&&(m.media.status==='pending'||!!m.media.provider&&m.media.status==='stopped')).map(m=>m.media!.jobId).sort().join('|');
   useEffect(()=>{
     if(!key)return;
     let cancelled=false;
     const missing=new Map<string,number>();
     async function poll(){
-      const jobs=(current.current.convs??[]).flatMap(c=>c.messages).map(m=>m.media).filter((m):m is MediaResult=>!!m?.jobId&&(!m.provider||!!m.conversationId)&&(m.status==='pending'||!!m.provider&&m.status==='stopped'));
+      const jobs=(current.current.convs??[]).flatMap(c=>c.messages).map(m=>m.media).filter((m):m is MediaResult=>m?.provider!=='realistic'&&!!m?.jobId&&(!m.provider||!!m.conversationId)&&(m.status==='pending'||!!m.provider&&m.status==='stopped'));
       for(const job of jobs){
         if(cancelled)return;
         try{

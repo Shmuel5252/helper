@@ -10,6 +10,16 @@ test('archive identifiers are stable UUIDs for old local chats and message posit
   assert.notEqual(a,await archiveId('old-local-id:2'));
 });
 const turn={id:'turn',conversation_id:'chat',model_key:'account-video',input:'a video',assets:[],status:'failed',output:[{type:'text',text:'Cannot create this video'}],error:null,sequence:1,provider_id:null,input_hash:'',created_at:'',checked_at:''} as ArchiveTurn;
+
+test('Realistic archive restores original request, settings and image without generation',()=>{
+  const input='  original\n request  ';
+  const settings={prompt:'English prompt',negative_prompt:'blur',steps:20,guidance_scale:6,seed:42,width:512,height:512,strength:0.65};
+  const saved={...turn,model_key:'realistic-image',input,status:'completed',output:[{type:'image',assetId:'image',realistic:{id:'job',originalRequest:input,settings,createdAt:''}}]} as ArchiveTurn;
+  const data={conversation:{id:'chat',title:'saved',created_at:new Date(0).toISOString(),updated_at:new Date(1).toISOString()},assets:[],turns:[saved]} as ArchiveTranscript;
+  const before=JSON.stringify(data),c=transcriptConversation(data),m=c.messages[1].media;
+  assert.equal(m?.provider,'realistic');assert.equal(m?.url,'/api/gemini/assets/image');assert.equal(m?.originalRequest,input);assert.deepEqual(m?.settings,settings);
+  assert.deepEqual(removeLocalChat([c],'chat'),[]);assert.equal(JSON.stringify(data),before);
+});
 test('deletion cannot discard an answer when only its request or partial text was archived',()=>{
   const saved={...turn,model_key:'chat:fast',status:'running' as const,output:[]};
   const answer={role:'assistant' as const,content:'complete answer'};

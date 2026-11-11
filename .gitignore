@@ -45,3 +45,5 @@ next-env.d.ts
 .claude/
 test-screenshots/
 .codex-attachments/
+.codex-remote-attachments/
+.local-images/

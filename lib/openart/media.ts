@@ -64,13 +64,14 @@ export async function mediaConfig() {
   return {
     configured: configured(), // false: the site has no OpenArt setup at all (modes hidden)
     available, // false while disconnected/broken: modes shown with a Hebrew notice
-    image: publicMediaOptions(OPTIONS.image),
+    image: [], // Image generation is exclusively handled by Realistic Vision.
     video: publicMediaOptions(OPTIONS.video),
     usage: available ? await usage().catch(() => null) : null,
   };
 }
 
 function option(kind: unknown, key: unknown): { kind: MediaKind; opt: MediaOption } {
+  if(kind==='image')throw new MediaError('תמונות נוצרות רק באמצעות Realistic Vision במחשב.',409);
   if (kind !== "image" && kind !== "video") throw new MediaError(MSG.unknownOption);
   const opt = OPTIONS[kind].find((o) => o.key === key); // allowlist: never a client-supplied model id
   if (!opt) throw new MediaError(MSG.unknownOption);

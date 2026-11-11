@@ -1,6 +1,6 @@
 "use client";
 
-import { Clapperboard, Download, Pencil } from "lucide-react";
+import { Clapperboard, Download } from "lucide-react";
 import type { MediaResult } from "@/lib/history";
 
 // One OpenArt generation in the chat: progress while it runs, then the image or an inline
@@ -9,14 +9,12 @@ export default function MediaCard({
   m,
   onView,
   onToVideo,
-  onEdit,
   onStop,
   onResume,
 }: {
   m: MediaResult;
   onView: (url: string) => void;
   onToVideo: (url: string) => void;
-  onEdit: (url: string) => void;
   onStop: () => void;
   onResume: () => void;
 }) {
@@ -95,10 +93,6 @@ export default function MediaCard({
               <button type="button" onClick={() => onToVideo(m.url!)} className={action}>
                 <Clapperboard size={16} aria-hidden />
                 הפוך לסרטון
-              </button>
-              <button type="button" onClick={() => onEdit(m.url!)} className={action}>
-                <Pencil size={16} aria-hidden />
-                ערוך
               </button>
             </>
           )}

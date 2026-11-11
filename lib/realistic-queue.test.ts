@@ -1,0 +1,31 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {randomUUID} from 'node:crypto';
+import {LocalImageQueue} from './realistic-queue.ts';
+import {normalizeSettings,type ImageJob} from './realistic-image.ts';
+const make=():ImageJob=>({id:randomUUID(),owner:'a',request_hash:'hash',input:'a cat',settings:normalizeSettings({prompt:'a cat'}),phase:'queued',created_at:new Date().toISOString(),updated_at:new Date().toISOString()});
+test('persistent queue deduplicates retries, binds owner, serializes claims and never replays ambiguous work',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'image-queue-'));const q=new LocalImageQueue(dir);const j=make();
+  await Promise.all([q.enqueue(j),q.enqueue(j)]);
+  assert.equal((await q.list()).length,1);
+  await assert.rejects(()=>q.enqueue({...j,owner:'b'}));
+  await assert.rejects(()=>q.enqueue({...j,request_hash:'different'}));
+  const claims=await Promise.all([q.claim('one'),q.claim('two')]);
+  assert.equal(claims.filter(Boolean).length,1);
+  const token=claims.find(Boolean)!.token!;
+  assert.equal(await q.update(j.id,'wrong','start'),false);
+  assert.equal(await q.update(j.id,token,'start'),true);
+  const restarted=new LocalImageQueue(dir);
+  assert.equal(await restarted.claim('three',Date.now()+601000),null);
+  assert.equal((await restarted.get(j.id))!.phase,'uncertain');
+});
+test('confirmed 429 can defer the same job and offline jobs survive a restart',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'image-queue-'));const q=new LocalImageQueue(dir);const j=make();
+  await q.enqueue(j);await q.claim('one');await q.update(j.id,'one','start');
+  await q.update(j.id,'one','defer');
+  assert.equal(await q.claim('two'),null);
+  assert.equal((await new LocalImageQueue(dir).claim('two',Date.now()+6000))!.id,j.id);
+});

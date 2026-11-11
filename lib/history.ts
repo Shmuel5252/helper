@@ -4,8 +4,10 @@
 // The pre-history app kept a single Msg[] under LEGACY_KEY; loadHistory() migrates it.
 
 import { storedDoc, type DocAttachment } from "./documents.ts";
+import type {ImageSettings,ImageSubmission} from './realistic-image.ts';
 
 export type Msg = {
+  privateImage?: boolean;
   archiveTurnId?: string;
   role: "user" | "assistant";
   content: string;
@@ -19,7 +21,11 @@ export type Msg = {
 
 // A generated image/video. Stores our proxied URL (/media/...) and metadata, never the file.
 export type MediaResult = {
-  provider?: 'account'|'fal';
+  provider?: 'account'|'fal'|'realistic';
+  settings?: ImageSettings;
+  originalRequest?: string;
+  statusText?: string;
+  submission?: ImageSubmission;
   conversationId?: string;
   kind: "image" | "video";
   status: "pending" | "done" | "failed" | "stopped";
@@ -38,6 +44,7 @@ export type MediaResult = {
 export const mediaAsText = (m: MediaResult) => `[${m.kind === "video" ? "סרטון שנוצר" : "תמונה שנוצרה"}: ${m.prompt}]`;
 
 export type Conversation = {
+  localOnly?: boolean;
   archiveId?: string;
   id: string;
   title: string;

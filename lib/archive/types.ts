@@ -1,7 +1,7 @@
 export type ArchiveModel = { key: string; label: string; model: string; kind: 'chat' | 'image' | 'video'; provider?: 'account'|'fal' };
 export type ArchiveConversation = { id: string; owner: string; title: string; created_at: string; updated_at: string };
 export type ArchiveAsset = { id: string; conversation_id: string; name: string; mime: string; size: number; extracted_text?: string | null };
-export type ArchiveOutput = { type: 'text'; text: string } | { type: 'image' | 'video'; assetId: string };
+export type ArchiveOutput = { type: 'text'; text: string } | { type: 'image' | 'video'; assetId: string; realistic?:{id:string;originalRequest:string;settings:import('../realistic-image').ImageSettings;createdAt:string} };
 export type ArchiveTurn = {
   id: string; conversation_id: string; sequence: number; model_key: string; input: string; assets: string[];
   status: 'starting' | 'running' | 'completed' | 'failed' | 'uncertain';
