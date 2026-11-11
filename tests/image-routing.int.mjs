@@ -5,7 +5,7 @@ import {createServer} from 'node:http';
 const base=process.env.BASE_URL||'http://127.0.0.1:3126';
 const workerSecret='local-image-test-worker-secret-123456789';
 let plannerCalls=0;
-let translationCalls=0,translationResult='A portrait of a man in a blue shirt',translationFailure=false;
+let translationCalls=0,translationResult='A portrait of a man in a blue shirt',translationFailure=false,translationStatus=200;
 const translationInputs=[];
 const planner=createServer(async(req,res)=>{
   let raw='';for await(const chunk of req)raw+=chunk;
@@ -19,6 +19,7 @@ const planner=createServer(async(req,res)=>{
     assert.match(body.messages[0].content,/translate/i);
     translationInputs.push(body.messages[1].content);
     res.setHeader('Content-Type','application/json');
+    if(translationStatus!==200){res.statusCode=translationStatus;res.end(JSON.stringify({error:{message:'Rate limit exceeded',type:'rate_limit_error'}}));return;}
     res.end(JSON.stringify({choices:[{finish_reason:translationFailure?'length':'stop',message:{role:'assistant',content:JSON.stringify({prompt:translationResult})}}]}));
     return;
   }
@@ -113,6 +114,10 @@ try{
   }
   translationResult='A man';translationFailure=true;
   assert.equal((await request('/api/images/jobs',{id:crypto.randomUUID(),text:'גבר',settings:{promptMode:'translate'}})).status,502);
+  translationStatus=429;
+  const limited=await request('/api/images/jobs',{id:crypto.randomUUID(),text:'גבר',settings:{promptMode:'translate'}});
+  assert.equal(limited.status,429);
+  assert.match((await limited.json()).error,/מודל תרגום אחר/);
   assert.equal((await (await worker({action:'claim'})).json()).job,null);
   assert.equal(plannerCalls,1,'translation errors must not fall back to AI planning');
   console.log('PASS translation-only routing, source fidelity, face suffix, English passthrough, retries and invalid-output handling');

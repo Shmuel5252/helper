@@ -85,6 +85,7 @@ async function planImage(text:string,modelKey:unknown,previous:ImageJob|null,man
       }catch(error){
         const status=(error as {status?:unknown})?.status;
         console.warn('Image translation failed',{stage,status:typeof status==='number'?status:undefined,error:error instanceof Error?error.name:'Unknown'});
+        if(status===429)throw new ArchiveError('מודל התרגום הגיע למגבלת השימוש. בחרו מודל תרגום אחר ליד השליחה או נסו שוב מאוחר יותר.',429);
         throw new ArchiveError('לא התקבל תרגום מלא לאנגלית. אפשר לנסות שוב או לבחור במצב ישיר.',502);
       }
     }

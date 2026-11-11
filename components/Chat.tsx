@@ -1071,7 +1071,7 @@ export default function Chat() {
                 }`}
               />
               <div className="ms-auto flex shrink-0 items-center gap-1.5">
-              {!mediaMode && showPicker && (
+              {(!mediaMode || realisticMode && imageSettings.promptMode === "translate") && showPicker && (
                 <ModelPicker
                   models={models}
                   value={currentKey}
