@@ -44,6 +44,23 @@ try{
   assert.equal((await worker({action:'heartbeat',state:'ready'})).status,200,'worker authenticates independently of browser cookies');
   assert.equal((await fetch(base+'/api/worker/images',{method:'POST',body:'{}'})).status,401);
   const quality='detailed face, sharp eyes, natural skin texture, photorealistic, high quality';
+  const localInput={id:crypto.randomUUID(),text:'ignored',settings:{promptMode:'local-translate',prompt:'גבר בחולצה כחולה',seed:7}};
+  const localResponse=await request('/api/images/jobs',localInput);
+  assert.equal(localResponse.status,200);
+  assert.equal((await localResponse.json()).settings.prompt,'גבר בחולצה כחולה','server must queue the untranslated source');
+  assert.equal(plannerCalls,0);assert.equal(translationCalls,0);
+  const localJob=(await (await worker({action:'claim'})).json()).job;
+  assert.equal(localJob.id,localInput.id);
+  const prepared={action:'translated',id:localJob.id,token:localJob.token,prompt:'A man in a blue shirt, '+quality};
+  assert.equal((await worker({...prepared,token:crypto.randomUUID()})).status,409);
+  assert.equal((await worker({...prepared,prompt:'עדיין בעברית'})).status,400);
+  assert.equal((await worker(prepared)).status,200);
+  const preparedJob=await (await request('/api/images/jobs/'+localJob.id)).json();
+  assert.equal(preparedJob.settings.prompt,prepared.prompt);
+  assert.equal(preparedJob.settings.seed,7);assert.equal(preparedJob.originalRequest,'ignored');
+  assert.equal((await worker({action:'start',id:localJob.id,token:localJob.token})).status,200);
+  assert.equal((await worker(prepared)).status,409,'cannot change a prompt after dispatch');
+  assert.equal((await worker({action:'fail',id:localJob.id,token:localJob.token})).status,200);
   for(const sample of [
     {text:'  בית ליד הים\n  ',settings:{promptMode:'direct'},expected:'  בית ליד הים\n  '},
     {text:'  A woman in blue  ',settings:{promptMode:'direct'},expected:'  A woman in blue  , '+quality},
@@ -120,6 +137,7 @@ try{
   assert.match((await limited.json()).error,/מודל תרגום אחר/);
   assert.equal((await (await worker({action:'claim'})).json()).job,null);
   assert.equal(plannerCalls,1,'translation errors must not fall back to AI planning');
+  console.log('PASS local translation queues without cloud LLM calls and stores the worker prompt under its active lease');
   console.log('PASS translation-only routing, source fidelity, face suffix, English passthrough, retries and invalid-output handling');
   console.log('PASS direct Hebrew/English with zero LLM calls, advanced prompt override, validation, idempotency, worker payload, private polling and default AI planning');
 }finally{planner.close();}

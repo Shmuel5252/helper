@@ -1,5 +1,5 @@
 // Shared public contract. No credentials or server imports in this module.
-export type ImageSettings={prompt:string;negative_prompt:string;steps:number;guidance_scale:number;seed:number;width:number;height:number;strength?:number;promptMode?:'ai'|'direct'|'translate'};
+export type ImageSettings={prompt:string;negative_prompt:string;steps:number;guidance_scale:number;seed:number;width:number;height:number;strength?:number;promptMode?:'ai'|'direct'|'translate'|'local-translate'};
 export type ImageOverrides=Partial<ImageSettings>;
 export type ImageSubmission={id:string;text:string;modelKey?:string;previousJobId?:string;reuseSeed:boolean;settings:ImageOverrides;conversationId?:string;sourceAssetId?:string};
 export type ImagePhase='queued'|'claimed'|'generating'|'done'|'failed'|'uncertain';
@@ -13,7 +13,7 @@ export const DEFAULT_NEGATIVE='low quality, blurry, distorted, watermark, text, 
 const FACE_QUALITY=['detailed face','sharp eyes','natural skin texture','photorealistic','high quality'];
 // Literal keyword detection only: no translation, rewriting or external service.
 const PERSON_MENTION=/(?:^|[^\p{L}\p{N}_])(?:person|people|human|humans|man|men|woman|women|boy|boys|girl|girls|child|children|adult|adults|baby|babies|teen|teens|teenager|teenagers|mother|father|daughter|son|[ובכלמהש]{0,3}(?:אדם|אנשים|איש|אישה|אשה|נשים|גבר|גברים|ילד|ילדה|ילדים|ילדות|נער|נערה|נערים|נערות|תינוק|תינוקת|תינוקות|אמא|אימא|אבא))(?=$|[^\p{L}\p{N}_])/iu;
-export function usesDirectImagePrompt(settings:ImageOverrides){return settings.promptMode!=='translate'&&(settings.promptMode==='direct'||settings.prompt!==undefined);}
+export function usesDirectImagePrompt(settings:ImageOverrides){return !['translate','local-translate'].includes(settings.promptMode??'')&&(settings.promptMode==='direct'||settings.prompt!==undefined);}
 export function directImagePrompt(text:string,personContext=text):string{
   if(typeof text!=='string'||!text.trim())throw Error('נדרש תיאור לתמונה.');
   if(!PERSON_MENTION.test(personContext.normalize('NFD').replace(/[\u0591-\u05c7]/g,'')))return text;
@@ -33,7 +33,7 @@ export function imageIntent(text:string,hasPrevious=false){
 export function normalizeSettings(auto:ImageOverrides,manual:ImageOverrides={}):ImageSettings{
   const x={...auto,...manual};
   if(typeof x.prompt!=='string'||!x.prompt.trim())throw Error('נדרש תיאור באנגלית לתמונה.');
-  const direct=x.promptMode==='direct'||x.promptMode==='translate';
+  const direct=x.promptMode==='direct'||x.promptMode==='translate'||x.promptMode==='local-translate';
   if(direct&&x.prompt.length>2000)throw Error('התיאור, כולל תוספת איכות הפנים, מוגבל ל־2000 תווים.');
   const num=(key:keyof ImageSettings,def:number,min:number,max:number,step=0)=>{
     const raw=x[key]??def;if(typeof raw!=='number'||!Number.isFinite(raw))throw Error('הגדרות התמונה אינן תקינות.');

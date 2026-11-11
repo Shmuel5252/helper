@@ -59,6 +59,11 @@ export async function publicImageJob(job:ImageJob){
 const schema={type:'object' as const,properties:{prompt:{type:'string',description:'Detailed English visual prompt, preserve user intent exactly including explicit content',maxLength:2000},negative_prompt:{type:'string',maxLength:2000},steps:{type:'integer',minimum:1,maximum:30},guidance_scale:{type:'number',minimum:1.1,maximum:12},width:{type:'integer',enum:[256,320,384,448,512]},height:{type:'integer',enum:[256,320,384,448,512]},seed:{type:'integer',minimum:-1,maximum:2147483647}},required:['prompt'],additionalProperties:false};
 export const generateImageTool={type:'function' as const,function:{name:'generate_image',description:'Generate an image.',parameters:schema}};
 async function planImage(text:string,modelKey:unknown,previous:ImageJob|null,manual:ImageOverrides,reuse:boolean){
+  if(manual.promptMode==='local-translate'){
+    try{
+      return automaticImageSettings(reuse&&previous?{seed:previous.settings.seed}:{},{...manual,prompt:manual.prompt??text,promptMode:'local-translate'});
+    }catch(e){throw new ArchiveError(e instanceof Error?e.message:'הגדרות התמונה אינן תקינות.');}
+  }
   if(manual.promptMode==='translate'){
     const source=manual.prompt??text;
     if(!source.trim()||source.length>2000)throw new ArchiveError('נדרש תיאור של עד 2000 תווים לתרגום.');
@@ -124,7 +129,7 @@ async function planImage(text:string,modelKey:unknown,previous:ImageJob|null,man
 export async function enqueueImage(owner:string,raw:unknown){
   enabled();const x=raw as {id:string;text:string;modelKey?:unknown;previousJobId?:string;reuseSeed?:boolean;settings?:ImageOverrides;conversationId?:string;sourceAssetId?:string};
   if(!x||!uuid(x.id)||typeof x.text!=='string'||!x.text.trim()||x.text.length>4000||x.settings&&typeof x.settings!=='object')throw new ArchiveError('בקשה לא תקינה.');
-  if(x.settings&&(x.settings.promptMode!==undefined&&!['ai','direct','translate'].includes(x.settings.promptMode)||x.settings.prompt!==undefined&&typeof x.settings.prompt!=='string'))throw new ArchiveError('הגדרות התמונה אינן תקינות.');
+  if(x.settings&&(x.settings.promptMode!==undefined&&!['ai','direct','translate','local-translate'].includes(x.settings.promptMode)||x.settings.prompt!==undefined&&typeof x.settings.prompt!=='string'))throw new ArchiveError('הגדרות התמונה אינן תקינות.');
   if(x.conversationId&&!uuid(x.conversationId)||x.sourceAssetId&&!uuid(x.sourceAssetId))throw new ArchiveError('קובץ או שיחה אינם תקינים.');
   if(x.conversationId)await conversation(x.conversationId,owner);
   if(x.sourceAssetId){
@@ -156,8 +161,8 @@ async function update(id:string,token:string,action:string,data:{image_id?:strin
   if(!ok)throw new ArchiveError('תוקף המשימה פג.',409);
 }
 export async function imageWorkerOperation(raw:unknown){
-  enabled();const x=raw as {action:string;id:string;token:string;state:string;png:string;imageId:string};
-  if(!x||!['heartbeat','claim','renew','start','defer','fail','complete','source'].includes(x.action))throw new ArchiveError('Invalid action');
+  enabled();const x=raw as {action:string;id:string;token:string;state:string;png:string;imageId:string;prompt:string};
+  if(!x||!['heartbeat','claim','renew','start','defer','fail','complete','source','translated'].includes(x.action))throw new ArchiveError('Invalid action');
   if(x.action==='heartbeat'){
     if(!['ready','busy','offline'].includes(x.state))throw new ArchiveError('Invalid state');
     if(imageMode()==='local')await queue().health(x.state);
@@ -169,6 +174,16 @@ export async function imageWorkerOperation(raw:unknown){
     return {job:j?{id:j.id,token:j.token,settings:j.settings}:null};
   }
   if(!uuid(x.id)||!uuid(x.token))throw new ArchiveError('Invalid claim');
+  if(x.action==='translated'){
+    if(typeof x.prompt!=='string'||!x.prompt.trim()||x.prompt.length>2000||/[\u0590-\u05ff]/u.test(x.prompt))throw new ArchiveError('Invalid translation');
+    const job=await getImageJob(x.id);
+    if(job.token!==x.token||job.phase!=='claimed'||job.settings.promptMode!=='local-translate')throw new ArchiveError('Invalid claim',409);
+    const now=new Date().toISOString();
+    const ok=imageMode()==='local'?await queue().update(x.id,x.token,'translated',{prompt:x.prompt}):
+      (await db<ImageJob[]>('realistic_jobs',`id=eq.${x.id}&token=eq.${x.token}&phase=eq.claimed&lease_until=gt.${encodeURIComponent(now)}`,'PATCH',{settings:{...job.settings,prompt:x.prompt},updated_at:now})).length===1;
+    if(!ok)throw new ArchiveError('תוקף המשימה פג.',409);
+    return {ok:true};
+  }
   if(x.action==='source'){
     const job=await getImageJob(x.id);
     if(job.token!==x.token||!['claimed','generating'].includes(job.phase)||Date.parse(job.lease_until??'')<Date.now())throw new ArchiveError('Invalid claim',409);

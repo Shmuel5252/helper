@@ -44,3 +44,5 @@ next-env.d.ts
 # local tooling / test artifacts
 .claude/
 test-screenshots/
+.local-images/
+__pycache__/

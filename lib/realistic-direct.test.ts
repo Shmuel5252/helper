@@ -44,3 +44,11 @@ test('face tokens can use the original Hebrew subject without expanding the tran
   assert.equal(directImagePrompt('A portrait by the window','אדם ליד החלון'),'A portrait by the window, '+quality);
   assert.equal(directImagePrompt('A red house','בית אדום'),'A red house');
 });
+
+test('local translation remains distinct from direct and cloud translation',()=>{
+  assert.equal(usesDirectImagePrompt({prompt:'אדם ליד חלון',promptMode:'local-translate'}),false);
+  const settings=normalizeSettings({prompt:'  אדם ליד חלון  ',promptMode:'local-translate',seed:42});
+  assert.equal(settings.prompt,'  אדם ליד חלון  ');
+  assert.equal(settings.promptMode,'local-translate');
+  assert.deepEqual(normalizeSettings(settings),settings);
+});

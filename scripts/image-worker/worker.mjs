@@ -1,7 +1,7 @@
 // Outbound-only worker; never opens a listening socket and never imports Python/models.
 import {mkdir,readFile,writeFile,rename,unlink} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
-import {normalizeSettings} from '../../lib/realistic-image.ts';
+import {prepareImageSettings} from './local-translation.mjs';
 import {previewAccess} from './preview-auth.mjs';
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -50,10 +50,15 @@ async function run(job){
   const renew=setInterval(()=>{void call({action:'renew',id:job.id,token:job.token}).catch(()=>{});},20000);
   try{
     await save({job});
+    const settings=await prepareImageSettings(job.settings);
+    if(settings.promptMode==='local-translate'){
+      await call({action:'translated',id:job.id,token:job.token,prompt:settings.prompt});
+      job={...job,settings:{...job.settings,prompt:settings.prompt}};
+      await save({job});
+    }
     // Durable acknowledgement BEFORE dispatch: ambiguous requests can never be replayed.
     await call({action:'start',id:job.id,token:job.token});
     const source=job.settings.sourceAssetId?await call({action:'source',id:job.id,token:job.token}):null;
-    const settings=normalizeSettings(job.settings);
     // Routing metadata stays in the queue; the engine receives the exact direct prompt.
     delete settings.promptMode;
     if(!source)delete settings.strength;

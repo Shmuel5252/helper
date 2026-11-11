@@ -57,11 +57,12 @@ export class LocalImageQueue{
     if(!j)return null;
     Object.assign(j,{phase:'claimed',token,lease_until:new Date(now+LEASE_MS).toISOString(),updated_at:new Date(now).toISOString()});return j;
   });}
-  update(id:string,token:string,action:string,data:{image_id?:string;error?:string}={}){return this.transaction(s=>{
+  update(id:string,token:string,action:string,data:{image_id?:string;error?:string;prompt?:string}={}){return this.transaction(s=>{
     const j=s.jobs.find(j=>j.id===id&&j.token===token);if(!j)return false;
     if(j.phase==='done'&&action==='complete')return true;
     if(!['claimed','generating'].includes(j.phase)||Date.parse(j.lease_until??'')<=Date.now())return false;
     if(action==='renew')j.lease_until=new Date(Date.now()+LEASE_MS).toISOString();
+    else if(action==='translated'&&j.phase==='claimed'&&j.settings.promptMode==='local-translate'&&typeof data.prompt==='string')j.settings.prompt=data.prompt;
     else if(action==='start'&&j.phase==='claimed')j.phase='generating';
     else if(action==='defer'){j.phase='queued';j.token=null;j.not_before=new Date(Date.now()+5000).toISOString();}
     else if(action==='complete'&&j.phase==='generating'){j.phase='done';j.image_id=data.image_id;}
