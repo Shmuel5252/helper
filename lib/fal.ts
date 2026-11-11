@@ -28,10 +28,9 @@ export function storedFalJob(value:string|null):FalJob|null {
 }
 export function falFailure(status:number,body:unknown):FalError {
   const text=JSON.stringify(body).toLowerCase();
-  const message=status===403&&text.includes('exhausted balance')?'אין יתרה מספקת ליצירה. בעל החשבון צריך להוסיף קרדיטים.':
+  const message=status===402||status===429||status===403&&/exhausted balance|insufficient.?balance|insufficient.?credits|quota.?exceeded/.test(text)?'לא הצלחנו ליצור.':
     status===403?'חשבון היצירה אינו מאפשר את הבקשה כרגע. יש לבדוק את ההגבלה בחשבון.':
     status===401?'חיבור שירות היצירה דורש חידוש.':
-    status===429?'שירות היצירה עמוס כרגע. אפשר לנסות שוב מאוחר יותר.':
     /safety|content_policy|nsfw|moderation/.test(text)?'לא ניתן ליצור את התוכן המבוקש. אפשר לשנות את התיאור ולנסות שוב.':
     'היצירה לא הושלמה. אפשר לשלוח שוב.';
   return new FalError(message,status>=400&&status<500);

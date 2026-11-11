@@ -1,15 +1,13 @@
 import 'server-only';
 import {createHash,type JsonWebKey} from 'node:crypto';
 import {falInput,submitFal,storedFalJob,falFailure,FalError,falOutput,readLimited,verifyFalSignature} from '../fal';
-import {redis,redisConfigured} from '../openart/redis';
-import {israelDay} from '../openart/day';
 import {ArchiveError} from './validation';
 import {assetsFor,db,getAssetBytes,putAsset} from './store';
 import {outputAsset,validMedia} from './worker-contract';
 import type {ArchiveTurn,TurnInput} from './types';
 
 export const falSelected=()=>process.env.MEDIA_PROVIDER==='fal';
-export function falReady(){return process.env.FAL_MEDIA_ENABLED==='true'&&!!process.env.FAL_KEY&&!!publicOrigin()&&redisConfigured();}
+export function falReady(){return process.env.FAL_MEDIA_ENABLED==='true'&&!!process.env.FAL_KEY&&!!publicOrigin();}
 function publicOrigin(){
   try{const u=new URL(process.env.FAL_PUBLIC_ORIGIN??'');return u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash?u.origin:null;}catch{return null;}
 }
@@ -20,16 +18,6 @@ const update=async(id:string,fields:Partial<ArchiveTurn>)=>{
 };
 function kindOf(t:{model_key:string}){return t.model_key==='fal-video-v1'?'video' as const:'image' as const;}
 
-// Conservative daily allowance, not a provider invoice. Unknown submissions retain
-// their allowance. Fixed settings reserve $0.10/image or $0.25/video; no auto-top-up.
-async function reserveBudget(kind:'image'|'video'){
-  const cap=Number(process.env.FAL_DAILY_LIMIT_USD??'1');
-  if(!Number.isFinite(cap)||cap<=0)throw new ArchiveError('יצירה בתשלום אינה מופעלת כרגע.',503);
-  const units=kind==='video'?250:100,key=`fal:allowance:${israelDay()}`;
-  const total=Number(await redis('INCRBY',key,units));
-  await redis('EXPIRE',key,3*86400);
-  if(total>Math.floor(cap*1000)){await redis('DECRBY',key,units);throw new ArchiveError('הגעתם למגבלת היצירה היומית. אפשר לנסות שוב מחר.',429);}
-}
 export async function startFal(owner:string,input:TurnInput):Promise<ArchiveTurn>{
   if(!falSelected()||!falReady())throw new ArchiveError('שירות היצירה החדש עדיין לא הופעל.',503);
   const attachments=await assetsFor(input.conversationId);
@@ -45,7 +33,6 @@ export async function startFal(owner:string,input:TurnInput):Promise<ArchiveTurn
   if(!created)return find(input.id); // Same request ID can never incur a second generation.
   let submitted=false;
   try{
-    await reserveBudget(kind);
     const hook=new URL('/api/fal/webhook',publicOrigin()!);hook.searchParams.set('turn',input.id);
     submitted=true;
     const job=await submitFal(process.env.FAL_KEY!,request,hook.href);

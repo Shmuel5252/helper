@@ -16,8 +16,12 @@ Vercel account access was renewed. After explicit owner approval for Production
 of `helper` / team `shmuel5252s-projects`, a separate fal deployment key was
 authorized through fal's browser flow and piped directly to Vercel as a sensitive
 Production variable. Its presence and target were verified without decrypting it.
-Production now uses `MEDIA_PROVIDER=fal`, `FAL_MEDIA_ENABLED=true` and a conservative
-daily allowance of $0.50. Deployment `dpl_DQMnugxg3qH8n5U3bJwfwNA3N9zj` is READY
+Production uses `MEDIA_PROVIDER=fal` and `FAL_MEDIA_ENABLED=true`.
+The owner requested removal of the application's daily allowance on 2026-11-11;
+the implementation no longer reads `FAL_DAILY_LIMIT_USD` or uses a Redis counter.
+Provider balance and provider-side limits still apply. Exhausted balance/payment
+and quota failures display `לא הצלחנו ליצור.` and do not trigger automatic retries.
+Deployment `dpl_DQMnugxg3qH8n5U3bJwfwNA3N9zj` was verified READY before this change
 at the existing `https://helper-zeta-eight.vercel.app` alias. Same access code and
 unified chat verified. Gemini worker credential was removed from Production and
 its old credential now receives 401 at the canonical worker endpoint.
@@ -28,10 +32,8 @@ its old credential now receives 401 at the canonical worker endpoint.
 - `MEDIA_PROVIDER=fal` with `FAL_MEDIA_ENABLED=true`: new media requests use fal.
 - `FAL_KEY`: server-only API credential, never shipped to client/browser.
 - `FAL_PUBLIC_ORIGIN`: canonical HTTPS app origin; callbacks go to `/api/fal/webhook`.
-- `FAL_DAILY_LIMIT_USD=1`: conservative per-day allowance using existing Upstash.
-  Each attempted image reserves $0.10, each video $0.25. This deliberately exceeds
-  currently documented fixed-setting model costs and is not an exact bill. Failed
-  and ambiguous submissions keep their reservation. No automatic top-up.
+- No application daily spending cap or automatic top-up. `FAL_MEDIA_ENABLED=false`
+  remains the separate switch for disabling new fal submissions.
 
 Fixed allowlisted endpoints/settings:
 
@@ -39,7 +41,8 @@ Fixed allowlisted endpoints/settings:
 - Edit: `fal-ai/flux-2/klein/4b/edit`, same output settings; up to four input images.
 - Video: `minimax/h3-max-turbo/text-to-video` or `/image-to-video`, 5 seconds,
   768P, balanced prompt expansion; at most one initial image.
-- Safety checks remain enabled. No automatic provider/model fallback.
+- No automatic provider/model fallback. The daily-cap update preserves the
+  owner's existing provider settings from commit `fb85ac5`.
 
 The canonical UI remains unchanged. Composer selection is loaded from the server;
 old Gemini creation requests are rejected after cutover, requiring refresh.
@@ -75,12 +78,14 @@ permanent archive deletion workflow continues to behave as before.
   mock-upstash and mock-fal: real Next routes, no real credentials/external calls.
   Covers image/video, image input, callback with no client polling, duplicate
   callback/submission, transient archive outage, refusals, insufficient credits,
-  uncertain submit, legacy client rejection, archive retention and daily allowance.
+  uncertain submit, legacy client rejection, archive retention and repeated
+  submissions beyond the former daily allowance. All test generations are mocked.
 - Normal local Turbopack build hit a Windows CSS worker startup failure; an isolated
   webpack build with the same source and in-process Tailwind provides a separate
   build check. Vercel's own production build also completed successfully.
 
-Verified results: all 92 tests passed, including historical-fal import regression.
+Initial migration results (before the owner's subsequent provider-setting change):
+all 92 tests passed, including historical-fal import regression.
 Typecheck and targeted eslint passed.
 Isolated end-to-end test passed including the archive-outage recovery case.
 Isolated webpack production build passed on retry, after Next emitted a security
@@ -88,6 +93,12 @@ advisory for the existing Next 16.4.0 dependency. That advisory remains unresolv
 do not describe the installed version as security-verified.
 
 ## Live verification — 2026-11-11
+
+Daily-cap removal validation: `lib/fal-errors.test.ts`, typecheck, targeted eslint,
+and the isolated route integration passed. The integration covers eight video
+submissions beyond the former allowance and generic exhausted-credit errors.
+No paid generations or existing conversation changes were made for this update.
+The obsolete Production `FAL_DAILY_LIMIT_USD` variable was removed.
 
 - New test conversation: `875933af-bfb5-59d1-9259-81c3ca5935f2`.
 - Image turn `cc96630a-50a7-43a4-916e-263c45ce48e4`: completed, JPEG 1,050,827 bytes.

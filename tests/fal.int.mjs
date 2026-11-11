@@ -49,6 +49,7 @@ for(const prompt of ['refusal','no-credits','ambiguous']){
   await api('/api/gemini/turns/'+id,null,'POST');
   const turn=(await transcript()).turns.find(t=>t.id===id);
   assert.equal(turn.status,prompt==='ambiguous'?'uncertain':'failed');assert.ok(turn.error);
+  if(prompt==='no-credits')assert.equal(turn.error,'לא הצלחנו ליצור.');
   await api('/api/gemini/turns',body);assert.equal((await stats()).calls,before+1);
 }
 assert.equal((await api('/api/gemini/turns',{id:randomUUID(),conversationId:cid,modelKey:'account-video',text:'old tab',assets:[]})).status,409);
@@ -56,14 +57,12 @@ const preserved=await transcript();
 assert.equal((await api('/api/gemini/conversations/'+cid,null,'DELETE')).status,200);
 assert.deepEqual(await transcript(),preserved);
 const other=await fetch(base+'/api/gemini/conversations/'+cid);assert.equal(other.status,401);
-// Exhaust the conservative allowance without passing any further job to fal.
-let blocked=false;
+// Repeated explicit requests pass the former daily allowance in this local simulator.
 for(let n=0;n<8;n++){
   const id=randomUUID(),before=(await stats()).calls;
   await api('/api/gemini/turns',{id,conversationId:cid,modelKey:'fal-video-v1',text:'budget',assets:[]});
   const turn=(await transcript()).turns.find(t=>t.id===id);
-  if(turn.status==='failed'&&turn.error?.includes('מגבלת')){assert.equal((await stats()).calls,before);blocked=true;break;}
+  assert.equal(turn.status,'running');assert.equal((await stats()).calls,before+1);
   await api('/api/gemini/turns/'+id,null,'POST');
 }
-assert.equal(blocked,true);
-console.log('PASS: queue modes, image-to-video, signed webhook without polling, duplicate protection, archive files, refusal, no credits, ambiguity, old-client block, local deletion retention, privacy, budget. No external requests.');
+console.log('PASS: queue modes, image-to-video, signed webhook without polling, duplicate protection, archive files, refusal, generic credit failure, ambiguity, old-client block, local deletion retention, privacy, no daily cap. No external requests.');
