@@ -4,6 +4,7 @@
 // The pre-history app kept a single Msg[] under LEGACY_KEY; loadHistory() migrates it.
 
 import { storedDoc, type DocAttachment } from "./documents.ts";
+import type { ImageSettings, ImageSubmission } from "./realistic-image.ts";
 
 export type Msg = {
   role: "user" | "assistant";
@@ -18,6 +19,11 @@ export type Msg = {
 
 // A generated image/video. Stores our proxied URL (/media/...) and metadata, never the file.
 export type MediaResult = {
+  provider?: 'account' | 'fal' | 'realistic';
+  settings?: ImageSettings;
+  originalRequest?: string;
+  statusText?: string;
+  submission?: ImageSubmission;
   kind: "image" | "video";
   status: "pending" | "done" | "failed" | "stopped";
   jobId?: string;
