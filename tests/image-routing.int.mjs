@@ -5,10 +5,24 @@ import {createServer} from 'node:http';
 const base=process.env.BASE_URL||'http://127.0.0.1:3126';
 const workerSecret='local-image-test-worker-secret-123456789';
 let plannerCalls=0;
+let translationCalls=0,translationResult='A portrait of a man in a blue shirt',translationFailure=false;
+const translationInputs=[];
 const planner=createServer(async(req,res)=>{
   let raw='';for await(const chunk of req)raw+=chunk;
-  const body=JSON.parse(raw);plannerCalls++;
+  const body=JSON.parse(raw);
   assert.equal(body.model,'mock-image-planner');
+  if(body.response_format?.type==='json_object'){
+    translationCalls++;
+    assert.equal(body.tools,undefined,'translation must not invoke the image planner');
+    assert.equal(body.temperature,0);
+    assert.equal(body.messages.length,2,'translation must not include previous image context');
+    assert.match(body.messages[0].content,/translate/i);
+    translationInputs.push(body.messages[1].content);
+    res.setHeader('Content-Type','application/json');
+    res.end(JSON.stringify({choices:[{finish_reason:translationFailure?'length':'stop',message:{role:'assistant',content:JSON.stringify({prompt:translationResult})}}]}));
+    return;
+  }
+  plannerCalls++;
   assert.equal(body.tool_choice.function.name,'generate_image');
   res.setHeader('Content-Type','application/json');
   res.end(JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[{id:'test',type:'function',function:{name:'generate_image',arguments:JSON.stringify({prompt:'A portrait of an adult man, detailed face, sharp eyes, natural skin texture, photorealistic',seed:42})}}]}}]}));
@@ -70,5 +84,37 @@ try{
   const claimed=(await claim.json()).job;assert.equal(claimed.id,input.id);
   assert.equal((await worker({action:'fail',id:claimed.id,token:claimed.token})).status,200);
   assert.equal((await (await request('/api/images/jobs/'+input.id)).json()).status,'failed');
+  for(const sample of [
+    {text:'דיוקן של גבר בחולצה כחולה',settings:{},translated:'A portrait of a man in a blue shirt',expected:'A portrait of a man in a blue shirt, '+quality,calls:1},
+    {text:'ignored',settings:{prompt:'בית אדום ליד הים'},translated:'A red house by the sea',expected:'A red house by the sea',calls:2},
+    {text:'A red house',settings:{},translated:'unused',expected:'A red house',calls:2},
+  ]){
+    translationResult=sample.translated;
+    const translated={id:crypto.randomUUID(),text:sample.text,settings:{...sample.settings,promptMode:'translate',seed:123,steps:10}};
+    const response=await request('/api/images/jobs',translated);
+    assert.equal(response.status,200,await response.clone().text());
+    const result=await response.json();
+    assert.equal(result.settings.prompt,sample.expected);
+    assert.equal(result.originalRequest,sample.text);
+    assert.equal(result.settings.promptMode,'translate');
+    assert.equal(result.settings.steps,10);assert.equal(result.settings.seed,123);
+    assert.equal(translationCalls,sample.calls);assert.equal(plannerCalls,1);
+    assert.equal((await request('/api/images/jobs',translated)).status,200);
+    assert.equal(translationCalls,sample.calls,'retry must not translate again');
+    const queued=(await (await worker({action:'claim'})).json()).job;
+    assert.equal(queued.id,translated.id);assert.equal(queued.settings.prompt,sample.expected);
+    assert.equal((await worker({action:'fail',id:queued.id,token:queued.token})).status,200);
+  }
+  assert.deepEqual(translationInputs,['דיוקן של גבר בחולצה כחולה','בית אדום ליד הים']);
+  for(const bad of ['', 'עדיין בעברית', 'x'.repeat(2001)]){
+    translationResult=bad;
+    const response=await request('/api/images/jobs',{id:crypto.randomUUID(),text:'דיוקן של גבר',settings:{promptMode:'translate'}});
+    assert.equal(response.status,502,'invalid translation must fail rather than silently change or enqueue text');
+  }
+  translationResult='A man';translationFailure=true;
+  assert.equal((await request('/api/images/jobs',{id:crypto.randomUUID(),text:'גבר',settings:{promptMode:'translate'}})).status,502);
+  assert.equal((await (await worker({action:'claim'})).json()).job,null);
+  assert.equal(plannerCalls,1,'translation errors must not fall back to AI planning');
+  console.log('PASS translation-only routing, source fidelity, face suffix, English passthrough, retries and invalid-output handling');
   console.log('PASS direct Hebrew/English with zero LLM calls, advanced prompt override, validation, idempotency, worker payload, private polling and default AI planning');
 }finally{planner.close();}

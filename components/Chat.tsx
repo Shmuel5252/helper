@@ -589,7 +589,7 @@ export default function Chat() {
   }
 
   async function generateRealistic(raw: string, previous?: MediaResult, reuse = sameSeedIntent(raw), settings: ImageOverrides = imageSettings) {
-    const text = usesDirectImagePrompt(settings) ? (raw.trim() ? raw : settings.prompt ?? raw) : raw.trim();
+    const text = usesDirectImagePrompt(settings) || settings.promptMode === "translate" ? (raw.trim() ? raw : settings.prompt ?? raw) : raw.trim();
     if (!text.trim() || !convs || imageSending.current || streaming || imagePending || processing) return;
     if (!imageCfg?.enabled) { setToast("שרת התמונות לא זמין"); return; }
     imageSending.current = true; setImageSubmitting(true);
@@ -839,7 +839,7 @@ export default function Chat() {
                         onRetry={() => m.media?.submission && void retryRealistic(m.media.submission)}
                         onVariant={reuse => {
                           setMode("image"); chooseImageProvider("realistic");
-                          const directSettings = m.media?.settings?.promptMode === "direct" ? { ...m.media.settings, seed: reuse ? m.media.settings.seed : -1 } : undefined;
+                          const directSettings = m.media?.settings && ["direct", "translate"].includes(m.media.settings.promptMode ?? "") ? { ...m.media.settings, seed: reuse ? m.media.settings.seed : -1 } : undefined;
                           void generateRealistic(directSettings?.prompt ?? (reuse ? "צור גרסה עם אותו Seed" : "צור גרסה נוספת"), m.media, reuse, directSettings);
                         }}
                       />

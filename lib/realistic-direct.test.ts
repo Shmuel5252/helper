@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {directImagePrompt, normalizeSettings} from './realistic-image.ts';
+import {directImagePrompt, normalizeSettings, usesDirectImagePrompt} from './realistic-image.ts';
 
 const quality='detailed face, sharp eyes, natural skin texture, photorealistic, high quality';
 test('direct text preserves English, Hebrew, whitespace and punctuation without expansion',()=>{
@@ -30,4 +30,17 @@ test('direct prompts survive worker normalization; legacy normalization stays un
   assert.deepEqual(normalizeSettings(settings),settings);
   assert.equal(normalizeSettings({prompt:'  original  ',seed:7}).prompt,'original');
   assert.equal(normalizeSettings({prompt:'x'.repeat(2001),seed:7}).prompt.length,2000);
+});
+
+test('translation mode takes precedence over an advanced prompt and survives normalization',()=>{
+  assert.equal(usesDirectImagePrompt({prompt:'גבר בחולצה כחולה',promptMode:'translate'}),false);
+  const settings=normalizeSettings({prompt:'A man in a blue shirt',promptMode:'translate',seed:7});
+  assert.equal(settings.promptMode,'translate');
+  assert.deepEqual(normalizeSettings(settings),settings);
+  assert.throws(()=>normalizeSettings({prompt:'x'.repeat(2001),promptMode:'translate'}));
+});
+
+test('face tokens can use the original Hebrew subject without expanding the translation',()=>{
+  assert.equal(directImagePrompt('A portrait by the window','אדם ליד החלון'),'A portrait by the window, '+quality);
+  assert.equal(directImagePrompt('A red house','בית אדום'),'A red house');
 });

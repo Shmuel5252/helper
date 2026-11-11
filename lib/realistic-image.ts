@@ -1,5 +1,5 @@
 // Shared public contract. No credentials or server imports in this module.
-export type ImageSettings={prompt:string;negative_prompt:string;steps:number;guidance_scale:number;seed:number;width:number;height:number;strength?:number;promptMode?:'ai'|'direct'};
+export type ImageSettings={prompt:string;negative_prompt:string;steps:number;guidance_scale:number;seed:number;width:number;height:number;strength?:number;promptMode?:'ai'|'direct'|'translate'};
 export type ImageOverrides=Partial<ImageSettings>;
 export type ImageSubmission={id:string;text:string;modelKey?:string;previousJobId?:string;reuseSeed:boolean;settings:ImageOverrides;conversationId?:string;sourceAssetId?:string};
 export type ImagePhase='queued'|'claimed'|'generating'|'done'|'failed'|'uncertain';
@@ -13,10 +13,10 @@ export const DEFAULT_NEGATIVE='low quality, blurry, distorted, watermark, text, 
 const FACE_QUALITY=['detailed face','sharp eyes','natural skin texture','photorealistic','high quality'];
 // Literal keyword detection only: no translation, rewriting or external service.
 const PERSON_MENTION=/(?:^|[^\p{L}\p{N}_])(?:person|people|human|humans|man|men|woman|women|boy|boys|girl|girls|child|children|adult|adults|baby|babies|teen|teens|teenager|teenagers|mother|father|daughter|son|[ובכלמהש]{0,3}(?:אדם|אנשים|איש|אישה|אשה|נשים|גבר|גברים|ילד|ילדה|ילדים|ילדות|נער|נערה|נערים|נערות|תינוק|תינוקת|תינוקות|אמא|אימא|אבא))(?=$|[^\p{L}\p{N}_])/iu;
-export function usesDirectImagePrompt(settings:ImageOverrides){return settings.promptMode==='direct'||settings.prompt!==undefined;}
-export function directImagePrompt(text:string):string{
+export function usesDirectImagePrompt(settings:ImageOverrides){return settings.promptMode!=='translate'&&(settings.promptMode==='direct'||settings.prompt!==undefined);}
+export function directImagePrompt(text:string,personContext=text):string{
   if(typeof text!=='string'||!text.trim())throw Error('נדרש תיאור לתמונה.');
-  if(!PERSON_MENTION.test(text.normalize('NFD').replace(/[\u0591-\u05c7]/g,'')))return text;
+  if(!PERSON_MENTION.test(personContext.normalize('NFD').replace(/[\u0591-\u05c7]/g,'')))return text;
   const missing=FACE_QUALITY.filter(token=>!text.toLowerCase().includes(token));
   return missing.length?text+', '+missing.join(', '):text;
 }
@@ -33,8 +33,8 @@ export function imageIntent(text:string,hasPrevious=false){
 export function normalizeSettings(auto:ImageOverrides,manual:ImageOverrides={}):ImageSettings{
   const x={...auto,...manual};
   if(typeof x.prompt!=='string'||!x.prompt.trim())throw Error('נדרש תיאור באנגלית לתמונה.');
-  const direct=x.promptMode==='direct';
-  if(direct&&x.prompt.length>2000)throw Error('התיאור הישיר, כולל תוספת איכות הפנים, מוגבל ל־2000 תווים.');
+  const direct=x.promptMode==='direct'||x.promptMode==='translate';
+  if(direct&&x.prompt.length>2000)throw Error('התיאור, כולל תוספת איכות הפנים, מוגבל ל־2000 תווים.');
   const num=(key:keyof ImageSettings,def:number,min:number,max:number,step=0)=>{
     const raw=x[key]??def;if(typeof raw!=='number'||!Number.isFinite(raw))throw Error('הגדרות התמונה אינן תקינות.');
     const v=Math.min(max,Math.max(min,raw));return step?Math.min(max,Math.max(min,Math.round(v/step)*step)):v;
@@ -43,7 +43,7 @@ export function normalizeSettings(auto:ImageOverrides,manual:ImageOverrides={}):
   if(seed===-1){const n=new Uint32Array(1);crypto.getRandomValues(n);seed=n[0]>>>1;}
   if(x.negative_prompt!==undefined&&typeof x.negative_prompt!=='string')throw Error('Negative prompt אינו תקין.');
   const strength=x.strength===undefined?undefined:num('strength',0.65,0.1,0.9);
-  return {prompt:direct?x.prompt:x.prompt.trim().slice(0,2000),negative_prompt:(x.negative_prompt??DEFAULT_NEGATIVE).slice(0,2000),steps:Math.max(num('steps',20,1,30,1),strength?Math.ceil(1/strength):1),guidance_scale:num('guidance_scale',6,1.1,12),width:num('width',512,256,512,64),height:num('height',512,256,512,64),seed,...(strength===undefined?{}:{strength}),...(direct?{promptMode:'direct' as const}:{})};
+  return {prompt:direct?x.prompt:x.prompt.trim().slice(0,2000),negative_prompt:(x.negative_prompt??DEFAULT_NEGATIVE).slice(0,2000),steps:Math.max(num('steps',20,1,30,1),strength?Math.ceil(1/strength):1),guidance_scale:num('guidance_scale',6,1.1,12),width:num('width',512,256,512,64),height:num('height',512,256,512,64),seed,...(strength===undefined?{}:{strength}),...(direct?{promptMode:x.promptMode}:{})};
 }
 // Quality-oriented automatic choices stay within this model's native API limits.
 // Explicit manual choices still take precedence; do not rewrite the user's prompt.
