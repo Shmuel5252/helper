@@ -10,9 +10,9 @@ export class FalError extends Error {
 }
 export function falInput(kind:FalKind,prompt:string,images:string[]):FalRequest {
   if(images.length>(kind==='video'?1:4))throw new FalError('אפשר לצרף תמונה אחת לסרטון ועד ארבע תמונות לעריכה.',true);
-  const common={prompt,enable_safety_checker:true,sync_mode:false};
+  const common={prompt,enable_safety_checker:false,sync_mode:false};
   if(kind==='video')return {endpoint:`minimax/h3-max-turbo/${images.length?'image':'text'}-to-video`,input:{...common,duration:5,resolution:'768P',prompt_expansion_mode:'balanced',...(images.length?{image_url:images[0]}:{aspect_ratio:'16:9'})}};
-  return {endpoint:'fal-ai/flux-2/klein/4b'+(images.length?'/edit':''),input:{...common,num_images:1,num_inference_steps:4,image_size:{width:1024,height:1024},output_format:'jpeg',...(images.length?{image_urls:images}:{})}};
+  return {endpoint:'fal-ai/flux-2/klein/4b'+(images.length?'/edit':''),input:{...common,num_images:1,num_inference_steps:4,image_size:{width:1024,height:1024},output_format:'jpeg',safety_tolerance:'5',...(images.length?{image_urls:images}:{})}};
 }
 const ENDPOINTS=new Set([falInput('image','',[]).endpoint,falInput('image','',['x']).endpoint,falInput('video','',[]).endpoint,falInput('video','',['x']).endpoint]);
 export function parseFalJob(value:unknown,endpoint:string):FalJob {
@@ -48,7 +48,7 @@ export async function submitFal(key:string,request:FalRequest,webhook:string,fet
 }
 export function falOutput(kind:FalKind,value:unknown):{url:string;mime:string}{
   const x=value as {error?:unknown;has_nsfw_concepts?:boolean[];images?:{url:string;content_type?:string}[];video?:{url:string;content_type?:string}};
-  if(!x||x.error||x.has_nsfw_concepts?.some(Boolean))throw falFailure(422,x);
+  if(!x||x.error)throw falFailure(422,x);
   const file=kind==='video'?x.video:x.images?.[0];
   if(!file||typeof file.url!=='string')throw new FalError('היצירה הסתיימה בלי קובץ תקין. אפשר לשלוח שוב.',true);
   const url=new URL(file.url);
