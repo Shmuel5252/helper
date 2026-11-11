@@ -25,6 +25,10 @@ import ModelPicker from "./ModelPicker";
 import ModeSwitch, { type Mode } from "./ModeSwitch";
 import Sidebar from "./Sidebar";
 import { useMediaPolling } from "./useMediaPolling";
+import { ImageAdvanced, RealisticImageCard, useRealisticPolling } from "./RealisticImage";
+import { sameSeedIntent, type ImageConfig, type ImageOverrides, type ImageSubmission } from "@/lib/realistic-image";
+import { requestJson as imageApi } from "@/lib/gemini-progress";
+import { watchUpdates } from "@/lib/gemini-polling";
 
 // Markdown is split into its own chunk so the page is ready to type before it loads.
 const Markdown = lazy(() => import("./Markdown"));
@@ -49,6 +53,12 @@ const PLACEHOLDERS: Record<Mode, string> = { chat: "שאלו כל דבר…", im
 // The composer chip lists OpenArt options with the same picker as chat models.
 const NO_EXHAUSTED: Exhausted = {};
 const asPickerModel = (o: PublicMediaOption): PublicModel => ({ ...o, vision: false, group: o.key });
+type ImageProvider = "openart" | "realistic";
+const IMAGE_PROVIDER_KEY = "ai-chat:image-provider";
+const IMAGE_PROVIDERS: PublicModel[] = [
+  { key: "openart", label: "OpenArt", description: "יצירה באמצעות החשבון · עם קרדיטים", modelName: "", vision: false, group: "openart" },
+  { key: "realistic", label: "Realistic Vision", description: "יצירת תמונות ללא קרדיטי OpenArt", modelName: "", vision: false, group: "realistic" },
+];
 
 const NO_MESSAGES: Msg[] = [];
 const MSG_NETWORK = "אין חיבור לאינטרנט, או שהחיבור נקטע. נסו שוב.";
@@ -101,6 +111,11 @@ export default function Chat() {
   const [attention, setAttention] = useState(0);
   // Image/video generation state.
   const [mode, setMode] = useState<Mode>("chat");
+  const [imageProvider, setImageProvider] = useState<ImageProvider>("openart");
+  const [imageCfg, setImageCfg] = useState<ImageConfig | null>(null);
+  const [imageSettings, setImageSettings] = useState<ImageOverrides>({});
+  const [imageSubmitting, setImageSubmitting] = useState(false);
+  const imageSending = useRef(false);
   const [mediaCfg, setMediaCfg] = useState<MediaConfig | null>(null);
   const [mediaKeys, setMediaKeys] = useState<Partial<Record<"image" | "video", string>>>({});
   const [sourceRef, setSourceRef] = useState<string | null>(null); // a previous result (/media/...) to edit or animate
@@ -130,16 +145,19 @@ export default function Chat() {
   const answeredBy = (key?: string) => (showPicker ? models.find((m) => m.key === key) : undefined);
   // Image/video mode: OpenArt options, the chosen one, an optional reference image, a live quote.
   const mediaMode = mode !== "chat";
-  const mediaOptions = mode === "chat" ? [] : (mediaCfg?.[mode] ?? []);
+  const realisticMode = mode === "image" && imageProvider === "realistic";
+  const openArtMode = mediaMode && !realisticMode;
+  const imagePending = messages.some(m => m.media?.provider === "realistic" && m.media.status === "pending");
+  const mediaOptions = mode === "chat" || realisticMode ? [] : (mediaCfg?.[mode] ?? []);
   const mediaKey = mode === "chat" ? undefined : mediaOptions.some((o) => o.key === mediaKeys[mode]) ? mediaKeys[mode] : mediaOptions[0]?.key;
   const mediaOption = mediaOptions.find((o) => o.key === mediaKey);
-  const mediaReady = mediaMode && !!mediaCfg?.available && !!mediaOption;
+  const mediaReady = realisticMode ? !!imageCfg?.enabled : openArtMode && !!mediaCfg?.available && !!mediaOption;
 
   // Images only for options that accept them; otherwise the attach button is hidden.
   // Generation always accepts one reference image (edit / start frame).
   // Chat mode always attaches documents; images only on options that accept them.
   const vision = !!models?.find((m) => m.key === currentKey)?.vision;
-  const canAttach = mediaMode ? !!mediaCfg?.available : true;
+  const canAttach = realisticMode ? imageCfg?.mode === "cloud" && imageCfg.enabled : mediaMode ? !!mediaCfg?.available : true;
   const showImages = mediaMode ? canAttach : vision;
   const shown = !showImages ? [] : mediaMode ? attachments.slice(0, 1) : attachments; // hidden (and not sent) otherwise
   const pendingDoc = mediaMode ? null : doc; // kept, but not offered, in image/video mode
@@ -150,15 +168,19 @@ export default function Chat() {
   const closeViewer = useCallback(() => setViewer(null), []);
 
   // The quote belongs to (mode, option, reference?): a stale one counts as "loading".
-  const quoteSig = mediaReady ? `${mode}|${mediaKey}|${refImage ? 1 : 0}|${quoteNonce}` : null;
+  const quoteSig = openArtMode && mediaReady ? `${mode}|${mediaKey}|${refImage ? 1 : 0}|${quoteNonce}` : null;
   const q = quote && quote.sig === quoteSig ? quote : null;
   const mediaPrompt = input.trim() || (mode === "video" && refImage ? DEFAULT_ANIMATE_PROMPT : "");
   const overCap = !!q?.credits && q.remaining != null && q.credits > q.remaining;
-  const canGenerate = mediaReady && !!q?.credits && !q.error && q.affordable !== false && !overCap && !!mediaPrompt && !processing;
+  const canGenerate = mediaReady && !!mediaPrompt && !processing && (realisticMode
+    ? !imageSubmitting && !streaming && !imagePending
+    : !!q?.credits && !q.error && q.affordable !== false && !overCap);
   // Spending needs two taps: the first arms it for exactly this request, any change disarms it.
   const confirmSig = `${quoteSig}|${input}|${refImage?.thumb.slice(-24) ?? ""}`;
   const confirming = canGenerate && confirmFor === confirmSig;
-  const mediaInfo = !mediaCfg?.available
+  const mediaInfo = realisticMode
+    ? !imageCfg?.enabled ? "שרת התמונות לא זמין" : imageSubmitting ? "שולח את הבקשה…" : imagePending ? "הבקשה הקודמת עדיין בטיפול." : imageCfg.worker === "offline" ? "ממתין לשרת התמונות" : ""
+    : !mediaCfg?.available
     ? MSG_MEDIA_UNAVAILABLE
     : !q
       ? "מחשב מחיר…"
@@ -169,9 +191,9 @@ export default function Chat() {
           : overCap
             ? `הגעתם לתקרה היומית של ${q.cap} קרדיטים. אפשר לנסות שוב מחר.`
             : `${q.credits} קרדיטים${q.cap != null ? ` · נותרו היום ${q.remaining} מתוך ${q.cap}` : ""}${confirming ? " · הקישו שוב לאישור" : ""}`;
-  const mediaInfoWarn = !mediaCfg?.available || !!q?.error || q?.affordable === false || overCap;
+  const mediaInfoWarn = realisticMode ? !imageCfg?.enabled : !mediaCfg?.available || !!q?.error || q?.affordable === false || overCap;
   // Narrow screens: the textarea gets its own row whenever the buttons row would be crowded.
-  const twoRow = showPicker || !!mediaCfg?.configured;
+  const twoRow = showPicker || mediaMode || !!mediaCfg?.configured;
 
   useEffect(() => {
     if (!quoteSig) return;
@@ -210,6 +232,17 @@ export default function Chat() {
     [],
   );
   const polling = useMediaPolling(convs, updateMedia, refreshMedia);
+  useRealisticPolling(convs, updateMedia);
+  useEffect(() => watchUpdates(async () => {
+    try { setImageCfg(await imageApi<ImageConfig>("/api/images/config")); } catch { /* Keep the last known state during a disconnect. */ }
+  }, window, document, 30000), []);
+
+  function chooseImageProvider(key: string) {
+    if (key !== "openart" && key !== "realistic") return;
+    setImageProvider(key);
+    setConfirmFor(null);
+    try { getStorage()?.setItem(IMAGE_PROVIDER_KEY, key); } catch { /* Selection still works without storage. */ }
+  }
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -217,8 +250,9 @@ export default function Chat() {
   }
 
   // From a result's buttons: edit it, or use it as a video's first frame.
-  function takeAsReference(url: string, next: "image" | "video") {
+  function takeAsReference(url: string, next: "image" | "video", provider: ImageProvider = "openart") {
     setMode(next);
+    if (next === "image") chooseImageProvider(provider);
     setSourceRef(url);
     setAttachments([]);
     inputRef.current?.focus();
@@ -299,6 +333,7 @@ export default function Chat() {
     setActiveId(h.activeId);
     setLastKey(getStorage()?.getItem(MODEL_KEY) ?? null);
     setDocNoteSeen(getStorage()?.getItem(DOC_NOTE_KEY) === "1");
+    setImageProvider(getStorage()?.getItem(IMAGE_PROVIDER_KEY) === "realistic" ? "realistic" : "openart");
     const t = Date.now();
     setNow(t);
     setExhausted(loadExhausted(getStorage(), t));
@@ -307,7 +342,7 @@ export default function Chat() {
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => Array.isArray(j?.models) && setModels(j.models))
       .catch(() => {}); // no list: no picker, the server uses its default
-    refreshMedia(); // no OpenArt setup: no image/video modes
+    refreshMedia();
   }, [refreshMedia]);
 
   function chooseModel(key: string) {
@@ -461,7 +496,7 @@ export default function Chat() {
       // earlier results (/media/...) aren't sent as images.
       const payload = prepareHistory(
         history
-          .filter((m) => !m.error && (m.content || m.images?.length || m.media?.status === "done"))
+          .filter((m) => (!m.privateImage || imageCfg?.promptAI) && !m.error && (m.content || m.images?.length || m.media?.status === "done"))
           .map((m) =>
             m.media
               ? { role: m.role, content: mediaAsText(m.media) }
@@ -531,8 +566,74 @@ export default function Chat() {
     }
   }
 
+  async function submitRealistic(request: ImageSubmission) {
+    try {
+      const response = await fetch("/api/images/jobs", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        updateMedia(request.id, { status: "failed", submission: undefined, error: result.error || "יצירת התמונה לא זמינה." });
+        return;
+      }
+      updateMedia(request.id, { status: result.status, originalRequest: result.originalRequest, settings: result.settings, url: result.url, statusText: result.statusText, error: result.error, submission: undefined });
+    } catch {
+      updateMedia(request.id, { statusText: "החיבור נקטע; בודק אם הבקשה נשמרה…", submission: request });
+    }
+  }
+
+  async function retryRealistic(request: ImageSubmission) {
+    if (imageSending.current) return;
+    imageSending.current = true; setImageSubmitting(true);
+    try { await submitRealistic(request); } finally { imageSending.current = false; setImageSubmitting(false); }
+  }
+
+  async function generateRealistic(raw: string, previous?: MediaResult, reuse = sameSeedIntent(raw)) {
+    const text = raw.trim();
+    if (!text || !convs || imageSending.current || streaming || imagePending || processing) return;
+    if (!imageCfg?.enabled) { setToast("שרת התמונות לא זמין"); return; }
+    imageSending.current = true; setImageSubmitting(true);
+    try {
+      const timestamp = Date.now(), id = active?.id ?? newId(), jobId = crypto.randomUUID();
+      const c = active ?? { id, title: makeTitle(text), createdAt: timestamp, updatedAt: timestamp, pinned: false, messages: [], modelKey: currentKey };
+      let conversationId: string | undefined, sourceAssetId: string | undefined;
+      if (refImage) {
+        if (imageCfg.mode !== "cloud") throw Error("עריכת תמונה דורשת אחסון פרטי פעיל.");
+        conversationId = jobId;
+        await imageApi("/api/gemini/conversations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: conversationId, title: makeTitle(text) }) });
+        const source = await fetch(refImage.source ?? refImage.dataUrl!);
+        if (!source.ok) throw Error("לא הצלחנו לצרף את התמונה.");
+        const blob = await source.blob();
+        const form = new FormData();
+        form.set("conversationId", conversationId);
+        form.set("file", new File([blob], "image.jpg", { type: blob.type }));
+        sourceAssetId = (await imageApi<{ id: string }>("/api/gemini/assets", { method: "POST", body: form })).id;
+      }
+      const submission: ImageSubmission = { id: jobId, text, modelKey: currentKey, previousJobId: previous?.jobId, reuseSeed: reuse, settings: { ...imageSettings }, conversationId, sourceAssetId };
+      const media: MediaResult = { kind: "image", status: "pending", provider: "realistic", jobId, prompt: text, originalRequest: text, optionKey: "generate_image", label: "Realistic Vision", modelName: "", credits: 0, statusText: "מכין את התמונה…", submission, conversationId };
+      const withCard: Conversation = { ...c, updatedAt: timestamp, messages: [...c.messages,
+        { role: "user", content: text, privateImage: true, ...(refImage ? { images: [refImage.thumb] } : {}) },
+        { role: "assistant", content: "", media, privateImage: true },
+      ] };
+      const next = [withCard, ...convs.filter(chat => chat.id !== id)];
+      stickRef.current = true;
+      setConvs(next); setActiveId(id);
+      saveHistory(getStorage(), { activeId: id, conversations: next });
+      setInput(""); setAttachments([]); setSourceRef(null);
+      await submitRealistic(submission);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : MSG_GENERIC);
+    } finally { imageSending.current = false; setImageSubmitting(false); }
+  }
+
   async function generateMedia() {
-    if (!canGenerate || !mediaOption || !q?.credits || !convs) return; // canGenerate implies an image/video mode
+    if (realisticMode) {
+      if (!canGenerate) return;
+      const previous = [...messages].reverse().find(m => m.media?.provider === "realistic" && m.media.status === "done")?.media;
+      await generateRealistic(input, previous);
+      return;
+    }
+    if (mode === "chat" || !canGenerate || !mediaOption || !q?.credits || !convs) return;
     if (!confirming) {
       // First tap: show the price as a confirmation.
       setConfirmFor(confirmSig);
@@ -634,7 +735,7 @@ export default function Chat() {
           onTogglePin={(id) => updateConv(id, (c) => ({ ...c, pinned: !c.pinned }))}
           onDelete={deleteConversation}
           footer={
-            mediaCfg?.available && mediaCfg.usage
+            !realisticMode && mediaCfg?.available && mediaCfg.usage
               ? `קרדיטים היום: ${mediaCfg.usage.spent}${mediaCfg.usage.cap !== null ? ` מתוך ${mediaCfg.usage.cap}` : ""}`
               : undefined
           }
@@ -730,7 +831,18 @@ export default function Chat() {
                   </div>
                 ) : (
                   <div key={i} className="msg-in">
-                    {m.media ? (
+                    {m.media?.provider === "realistic" ? (
+                      <RealisticImageCard
+                        m={m.media} onView={setViewer}
+                        onEdit={url => takeAsReference(url, "image", "realistic")}
+                        submitting={imageSubmitting}
+                        onRetry={() => m.media?.submission && void retryRealistic(m.media.submission)}
+                        onVariant={reuse => {
+                          setMode("image"); chooseImageProvider("realistic");
+                          void generateRealistic(reuse ? "צור גרסה עם אותו Seed" : "צור גרסה נוספת", m.media, reuse);
+                        }}
+                      />
+                    ) : m.media ? (
                       <MediaCard
                         m={m.media}
                         onView={setViewer}
@@ -851,7 +963,8 @@ export default function Chat() {
                   )}
                 </div>
               )}
-              {mediaMode && (
+              {realisticMode && <ImageAdvanced value={imageSettings} onChange={setImageSettings} promptAI={!!imageCfg?.promptAI} />}
+              {mediaMode && mediaInfo && (
                 // Live price and today's remaining credits; the price shown is the one confirmed.
                 <p role="status" data-testid="media-info" className={`px-2 pb-1 text-[13px] ${mediaInfoWarn ? "text-danger" : "text-muted"}`}>
                   {mediaInfo}
@@ -888,7 +1001,7 @@ export default function Chat() {
                   <Paperclip size={20} aria-hidden />
                 </button>
               )}
-              {mediaCfg?.configured && (
+              {(mediaCfg?.configured || imageCfg !== null) && (
                 <div className="flex h-10 items-center">
                   <ModeSwitch value={mode} onChange={switchMode} />
                 </div>
@@ -967,7 +1080,10 @@ export default function Chat() {
                   attention={attention}
                 />
               )}
-              {mediaMode && mediaOptions.length > 0 && (
+              {mode === "image" && (
+                <ModelPicker models={IMAGE_PROVIDERS} value={imageProvider} onChange={chooseImageProvider} exhausted={NO_EXHAUSTED} now={now} attention={0} />
+              )}
+              {openArtMode && mediaOptions.length > 0 && (
                 <ModelPicker
                   models={mediaOptions.map(asPickerModel)}
                   value={mediaKey}
@@ -986,6 +1102,11 @@ export default function Chat() {
                   className="press flex size-10 shrink-0 items-center justify-center rounded-full bg-fg text-bg transition-transform"
                 >
                   <Square size={14} fill="currentColor" aria-hidden />
+                </button>
+              ) : realisticMode ? (
+                <button type="submit" disabled={!canGenerate || !convs} aria-label="יצירת תמונה" title="יצירת תמונה"
+                  className="press flex size-10 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg transition-[opacity,transform] disabled:opacity-30">
+                  <ArrowUp size={20} strokeWidth={2.25} aria-hidden />
                 </button>
               ) : mediaMode ? (
                 <button

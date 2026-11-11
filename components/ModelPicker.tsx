@@ -107,7 +107,7 @@ export default function ModelPicker({
                 <span className="min-w-0 flex-1">
                   <span className={`block text-base leading-snug font-medium ${out ? "text-muted" : ""}`}>{m.label}</span>
                   <span className="block text-[14px] leading-snug text-muted">
-                    {m.description && `${m.description} · `}
+                    {m.description && `${m.description}${m.modelName ? " · " : ""}`}
                     {/* LTR island inside the RTL row, so "Gemini 3.6 Flash" reads correctly. */}
                     <span dir="ltr" className="whitespace-nowrap">
                       {m.modelName}

@@ -34,7 +34,7 @@ export function useMediaPolling(
   useEffect(() => {
     for (const c of convs ?? [])
       for (const m of c.messages) {
-        const id = m.media?.status === "pending" ? m.media.jobId : undefined;
+        const id = m.media?.provider !== "realistic" && m.media?.status === "pending" ? m.media.jobId : undefined;
         if (!id || running.current.has(id) || stopped.current.has(id)) continue;
         running.current.add(id);
         void follow(id).finally(() => running.current.delete(id));

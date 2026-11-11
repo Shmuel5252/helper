@@ -7,6 +7,7 @@ import { storedDoc, type DocAttachment } from "./documents.ts";
 import type { ImageSettings, ImageSubmission } from "./realistic-image.ts";
 
 export type Msg = {
+  privateImage?: boolean;
   role: "user" | "assistant";
   content: string;
   error?: string;
@@ -24,6 +25,7 @@ export type MediaResult = {
   originalRequest?: string;
   statusText?: string;
   submission?: ImageSubmission;
+  conversationId?: string;
   kind: "image" | "video";
   status: "pending" | "done" | "failed" | "stopped";
   jobId?: string;
