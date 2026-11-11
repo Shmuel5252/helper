@@ -82,7 +82,10 @@ export function loadHistory(storage: Store | null, now = Date.now()): History {
     if (raw) {
       const parsed = JSON.parse(raw);
       const conversations = Array.isArray(parsed?.conversations)
-        ? parsed.conversations.filter(isConversation)
+        ? parsed.conversations.filter(isConversation).map((c:Conversation)=>({...c,messages:c.messages.map(m=>
+          m.media?.provider&&m.media.status==='pending'&&!m.media.conversationId
+            ? {...m,media:{...m.media,status:'failed',error:'השליחה לא הושלמה. אפשר לנסות שוב.'}}
+            : m)}))
         : [];
       const activeId = conversations.some((c: Conversation) => c.id === parsed.activeId)
         ? parsed.activeId

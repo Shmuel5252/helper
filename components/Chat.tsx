@@ -507,17 +507,23 @@ export default function Chat() {
     if(!selected){sending.current=false;setSubmitting(false);setToast(MSG_MEDIA_UNAVAILABLE);return;}
     const timestamp=Date.now(),id=active?.id??newId(),jobId=crypto.randomUUID();
     const c=active??{id,title:makeTitle(prompt),createdAt:timestamp,updatedAt:timestamp,pinned:false,messages:[],modelKey:currentKey};
+    const media:MediaResult={kind,status:'pending',provider:selected.provider,jobId,prompt,optionKey:selected.key,label:'',modelName:'',credits:0};
+    const user:Msg={role:'user',content:prompt,archiveTurnId:jobId,...(ref?{images:[ref.thumb],...(ref.dataUrl?{full:[ref.dataUrl]}:{})}:{})};
+    const withCard={...c,updatedAt:timestamp,messages:[...c.messages,user,{role:'assistant' as const,content:'',media}]};
+    // Show and remember the message before archive preparation or image upload.
+    stickRef.current=true;
+    setConvs(cs=>cs&&[withCard,...cs.filter(x=>x.id!==id)]);setActiveId(id);
+    saveHistory(getStorage(),{activeId:id,conversations:[withCard,...convs.filter(x=>x.id!==id)]},{prune:false});
+    setInput('');setAttachments([]);setSourceRef(null);
     let cid:string|undefined;let accepted=false;
     try{
       cid=await preserveChat(c);
       const assets=ref?[await archiveImage(cid,ref.source??ref.dataUrl!)]:[];
-      const media:MediaResult={kind,status:'pending',provider:selected.provider,conversationId:cid,jobId,prompt,optionKey:selected.key,label:'',modelName:'',credits:0};
-      const user:Msg={role:'user',content:prompt,archiveTurnId:jobId,...(ref?{images:[ref.thumb]}:{})};
-      const withCard={...c,updatedAt:timestamp,messages:[...c.messages,user,{role:'assistant' as const,content:'',media}]};
-      // Persist the request identifier before submission; a lost acknowledgement is polled, never resent.
-      const next=[withCard,...convs.filter(x=>x.id!==id)];
-      saveHistory(getStorage(),{activeId:id,conversations:next},{prune:false});setConvs(next);setActiveId(id);
-      setInput('');setAttachments([]);setSourceRef(null);stickRef.current=true;
+      // Persist the polling address before submission, without resetting a new draft or selected chat.
+      const stored=loadHistory(getStorage());
+      stored.conversations=stored.conversations.map(chat=>chat.id===id?{...chat,messages:chat.messages.map(m=>m.media?.jobId===jobId?{...m,media:{...m.media,status:'pending',error:undefined,conversationId:cid}}:m)}:chat);
+      saveHistory(getStorage(),stored,{prune:false});
+      updateMedia(jobId,{conversationId:cid});
       accepted=true;
       await api('/api/gemini/turns',post({id:jobId,conversationId:cid,modelKey:selected.key,text:prompt,assets}));
     }catch(e){
@@ -527,7 +533,7 @@ export default function Chat() {
           const turn=data.turns.find(t=>t.id===jobId);
           updateMedia(jobId,turn?mediaPatch(turn):{status:'failed',error:e instanceof Error?e.message:MSG_GENERIC});
         }catch{setToast('החיבור נקטע. נבדוק את מצב הבקשה בלי לשלוח אותה שוב.');}
-      }else setToast(e instanceof Error?e.message:MSG_GENERIC);
+      }else updateMedia(jobId,{status:'failed',error:e instanceof Error?e.message:'לא הצלחנו לשלוח. אפשר לנסות שוב.'});
     }finally{sending.current=false;setSubmitting(false);}
   }
 

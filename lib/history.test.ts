@@ -36,6 +36,20 @@ const conv = (id: string, updatedAt: number, extra: Partial<Conversation> = {}):
   messages: [{ role: "user", content: "x".repeat(100) }],
   ...extra,
 });
+
+test('reload interrupts only a new media send that has not reached submission',()=>{
+  const s=new FakeStorage();
+  const media={kind:'image' as const,status:'pending' as const,provider:'fal' as const,jobId:'new-job',prompt:'boat',optionKey:'fal-image-v1',label:'',modelName:'',credits:0};
+  const old=conv('existing',1);
+  const preparing=conv('preparing',2,{messages:[{role:'user',content:'boat'},{role:'assistant',content:'',media}]});
+  const submitted=conv('submitted',3,{messages:[{role:'assistant',content:'',media:{...media,conversationId:'archive-id'}}]});
+  saveHistory(s,{activeId:'preparing',conversations:[preparing,submitted,old]},{prune:false});
+  const loaded=loadHistory(s);
+  assert.equal(loaded.conversations[0].messages[1].media?.status,'failed');
+  assert.equal(loaded.conversations[0].messages[0].content,'boat');
+  assert.deepEqual(loaded.conversations[1],submitted);
+  assert.deepEqual(loaded.conversations[2],old);
+});
 test('non-pruning save preserves old history when storage fills and retains more than 100 conversations',()=>{
   const s=new FakeStorage();
   const first={activeId:'old',conversations:[conv('old',1)]};

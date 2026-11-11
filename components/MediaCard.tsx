@@ -38,10 +38,10 @@ export default function MediaCard({
             <span />
             <span />
           </div>
-          <p className="text-[15px] text-muted">{video ? "יוצר סרטון… זה יכול לקחת כמה דקות" : "יוצר תמונה…"}</p>
-          <button type="button" onClick={onStop} className="press rounded-full px-3 py-1 text-[14px] text-muted underline-offset-2 hover:text-fg hover:underline">
+          <p className="text-[15px] text-muted">{m.provider&&!m.conversationId ? 'שולח…' : video ? "יוצר סרטון… זה יכול לקחת כמה דקות" : "יוצר תמונה…"}</p>
+          {(!m.provider||m.conversationId)&&<button type="button" onClick={onStop} className="press rounded-full px-3 py-1 text-[14px] text-muted underline-offset-2 hover:text-fg hover:underline">
             ביטול
-          </button>
+          </button>}
         </div>
       )}
 
