@@ -11,7 +11,10 @@ export class FalError extends Error {
 export function falInput(kind:FalKind,prompt:string,images:string[]):FalRequest {
   if(images.length>(kind==='video'?1:4))throw new FalError('אפשר לצרף תמונה אחת לסרטון ועד ארבע תמונות לעריכה.',true);
   const common={prompt,enable_safety_checker:false,sync_mode:false};
-  if(kind==='video')return {endpoint:`minimax/h3-max-turbo/${images.length?'image':'text'}-to-video`,input:{...common,duration:5,resolution:'768P',prompt_expansion_mode:'balanced',...(images.length?{image_url:images[0]}:{aspect_ratio:'16:9'})}};
+  if(kind==='video'){
+    const endpoint=`fal-ai/wan/turbo/${images.length?'image':'text'}-to-video`;
+    return {endpoint,input:{...common,enable_output_safety_checker:false,resolution:'720p',...(images.length?{image_url:images[0],aspect_ratio:'auto'}:{aspect_ratio:'16:9'})}};
+  }
   return {endpoint:'fal-ai/flux-2/klein/4b'+(images.length?'/edit':''),input:{...common,num_images:1,num_inference_steps:4,image_size:{width:1024,height:1024},output_format:'jpeg',safety_tolerance:'5',...(images.length?{image_urls:images}:{})}};
 }
 const ENDPOINTS=new Set([falInput('image','',[]).endpoint,falInput('image','',['x']).endpoint,falInput('video','',[]).endpoint,falInput('video','',['x']).endpoint]);
