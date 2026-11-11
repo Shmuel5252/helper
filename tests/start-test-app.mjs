@@ -21,6 +21,10 @@ const env = {
   OPENART_TOKEN_KEY: Buffer.alloc(32, 7).toString("base64"), // fixed test key
   ADMIN_CODE: "admin-test",
   CRON_SECRET: "cron-test",
+  GEMINI_API_KEY: "mock-gemini-key",
+  GEMINI_API_BASE_URL: "http://localhost:4040/v1beta",
+  SUPABASE_URL: "http://localhost:4040",
+  SUPABASE_SECRET_KEY: "mock-supabase-secret",
   OPENART_DAILY_CREDIT_CAP: "200",
   AI_MODELS: process.env.TEST_AI_MODELS ?? [
     "fast|mock-fast|מהיר|לרוב השאלות|none|1",

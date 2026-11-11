@@ -107,7 +107,7 @@ export default function MediaCard({
 
       {m.status !== "failed" && (
         <p className="text-[13px] text-muted" data-testid="media-label">
-          {video ? "סרטון" : "תמונה"} · {m.label} · {m.credits} קרדיטים
+          {video ? "סרטון" : "תמונה"}{!m.provider&&<> · {m.label} · {m.credits} קרדיטים</>}
         </p>
       )}
     </div>

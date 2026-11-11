@@ -1,3 +1,6 @@
 {
-  "crons": [{ "path": "/api/cron/openart-refresh", "schedule": "17 3 * * *" }]
+  "crons": [
+    { "path": "/api/cron/openart-refresh", "schedule": "17 3 * * *" },
+    { "path": "/api/cron/archive", "schedule": "41 3 * * *" }
+  ]
 }

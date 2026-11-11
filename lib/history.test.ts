@@ -36,6 +36,21 @@ const conv = (id: string, updatedAt: number, extra: Partial<Conversation> = {}):
   messages: [{ role: "user", content: "x".repeat(100) }],
   ...extra,
 });
+test('non-pruning save preserves old history when storage fills and retains more than 100 conversations',()=>{
+  const s=new FakeStorage();
+  const first={activeId:'old',conversations:[conv('old',1)]};
+  saveHistory(s,first,{prune:false});
+  const snapshot=s.getItem(STORE_KEY);
+  s.limit=snapshot!.length;
+  const next={activeId:'new',conversations:[conv('new',2),...first.conversations]};
+  const result=saveHistory(s,next,{prune:false});
+  assert.equal(result.ok,false);
+  assert.equal(result.quotaPruned,0);
+  assert.equal(s.getItem(STORE_KEY),snapshot);
+  s.limit=Infinity;
+  const many={activeId:'0',conversations:Array.from({length:101},(_,i)=>conv(String(i),i))};
+  assert.equal(saveHistory(s,many,{prune:false}).history.conversations.length,101);
+});
 
 test("title: trimmed, whitespace collapsed, cut at 40 chars with an ellipsis", () => {
   assert.equal(makeTitle("  שלום   עולם \n "), "שלום עולם");

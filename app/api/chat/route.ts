@@ -9,6 +9,9 @@ import { quotaGroup, resolveModel } from "@/lib/models";
 import { API_KEY, BASE_URL, MODELS } from "@/lib/serverConfig";
 import { SYSTEM_PROMPT } from "@/lib/systemPrompt";
 import { createThinkFilter } from "@/lib/think";
+import {beginChat,finishChat,parseChatArchive} from '@/lib/archive/chat';
+import {deviceOwner,sameOrigin} from '@/lib/archive/identity';
+import {failure} from '@/lib/archive/http';
 
 export const maxDuration = 60;
 
@@ -62,6 +65,13 @@ export async function POST(request: Request) {
   // Quotas are per model, so only an option on another model is a real alternative.
   const errorOpts = { alternatives: MODELS.some((m) => m.model !== entry.model) };
 
+  let archiveTurn:string|undefined;
+  if(body.archive){
+    try{sameOrigin(request);const input=parseChatArchive(body.archive);await beginChat(await deviceOwner(),input,entry.key);archiveTurn=input.id;}
+    catch(e){return failure(e);}
+  }
+  const save=async(text:string,error?:string)=>{if(archiveTurn)await finishChat(archiveTurn,text,error);};
+
   let stream;
   try {
     stream = await client.chat.completions.create(
@@ -78,6 +88,7 @@ export async function POST(request: Request) {
       { signal: request.signal },
     );
   } catch (e) {
+    await save('',request.signal.aborted?'התשובה נעצרה.':hebrewError(e,errorOpts));
     if (request.signal.aborted) return new Response(null, { status: 499 });
     console.error("AI request failed:", e);
     if (isDailyQuota(e)) {
@@ -98,19 +109,22 @@ export async function POST(request: Request) {
   const out = new ReadableStream<Uint8Array>({
     async start(controller) {
       const think = createThinkFilter();
+      let savedText='';let savedError:string|undefined;
       try {
         for await (const chunk of stream) {
           const text = think.push(chunk.choices[0]?.delta?.content ?? "");
-          if (text) controller.enqueue(enc.encode(text));
+          if (text) {savedText+=text;controller.enqueue(enc.encode(text));}
         }
         const rest = think.flush();
-        if (rest) controller.enqueue(enc.encode(rest));
+        if (rest) {savedText+=rest;controller.enqueue(enc.encode(rest));}
       } catch (e) {
+        savedError=request.signal.aborted?'התשובה נעצרה.':hebrewError(e,errorOpts);
         if (!request.signal.aborted) {
           console.error("AI stream failed:", e);
           controller.enqueue(enc.encode(ERROR_MARK + hebrewError(e, errorOpts)));
         }
       }
+      try{await save(savedText,savedError);}catch{try{controller.enqueue(enc.encode(ERROR_MARK+'התשובה התקבלה, אך השמירה בארכיון לא הושלמה. אל תמחקו את השיחה עדיין.'));}catch{/* disconnected client */}}
       try {
         controller.close();
       } catch {

@@ -6,6 +6,7 @@
 import { storedDoc, type DocAttachment } from "./documents.ts";
 
 export type Msg = {
+  archiveTurnId?: string;
   role: "user" | "assistant";
   content: string;
   error?: string;
@@ -18,6 +19,8 @@ export type Msg = {
 
 // A generated image/video. Stores our proxied URL (/media/...) and metadata, never the file.
 export type MediaResult = {
+  provider?: 'account'|'fal';
+  conversationId?: string;
   kind: "image" | "video";
   status: "pending" | "done" | "failed" | "stopped";
   jobId?: string;
@@ -35,6 +38,7 @@ export type MediaResult = {
 export const mediaAsText = (m: MediaResult) => `[${m.kind === "video" ? "סרטון שנוצר" : "תמונה שנוצרה"}: ${m.prompt}]`;
 
 export type Conversation = {
+  archiveId?: string;
   id: string;
   title: string;
   createdAt: number;
@@ -135,9 +139,10 @@ function dropOldest(list: Conversation[], keepId: string | null): Conversation[]
 export function saveHistory(
   storage: Store | null,
   history: History,
+  options: { prune?: boolean } = {},
 ): { ok: boolean; quotaPruned: number; history: History } {
   let list = history.conversations;
-  while (list.length > MAX_CONVERSATIONS) {
+  while (options.prune !== false && list.length > MAX_CONVERSATIONS) {
     const next = dropOldest(list, history.activeId);
     if (!next) break;
     list = next;
@@ -153,7 +158,7 @@ export function saveHistory(
       storage.setItem(STORE_KEY, JSON.stringify({ v: 2, ...current }, (k, v) => (k === "full" ? undefined : k === "doc" ? storedDoc(v) : v)));
       return { ok: true, quotaPruned, history: current };
     } catch (e) {
-      const next = isQuotaError(e) ? dropOldest(list, history.activeId) : null;
+      const next = options.prune !== false && isQuotaError(e) ? dropOldest(list, history.activeId) : null;
       if (!next) return { ok: false, quotaPruned, history: current };
       list = next;
     }

@@ -9,6 +9,12 @@ export async function proxy(request: NextRequest) {
   // Owner pages and the cron endpoint protect themselves (ADMIN_CODE / CRON_SECRET),
   // independent of the friend's access code.
   if (/^\/(admin|api\/admin|api\/cron)(\/|$)/.test(url.pathname)) return NextResponse.next();
+  // This endpoint requires its own dedicated worker credential, never the access code.
+  if (url.pathname === '/api/worker/gemini') return NextResponse.next();
+  // fal callbacks authenticate their signature and bind the provider request ID.
+  if (url.pathname === '/api/fal/webhook') return NextResponse.next();
+  // Private files enforce their own per-device or owner-admin authorization.
+  if (/^\/api\/gemini\/assets\/[0-9a-f-]+$/i.test(url.pathname)) return NextResponse.next();
 
   // No ACCESS_CODE: the gate is deliberately off and the site is open.
   if (!code) return isLogin ? NextResponse.redirect(new URL("/", request.url)) : NextResponse.next();
