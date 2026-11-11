@@ -26,7 +26,7 @@ import ModeSwitch, { type Mode } from "./ModeSwitch";
 import Sidebar from "./Sidebar";
 import { useMediaPolling } from "./useMediaPolling";
 import { ImageAdvanced, RealisticImageCard, useRealisticPolling } from "./RealisticImage";
-import { sameSeedIntent, type ImageConfig, type ImageOverrides, type ImageSubmission } from "@/lib/realistic-image";
+import { sameSeedIntent, usesDirectImagePrompt, type ImageConfig, type ImageOverrides, type ImageSubmission } from "@/lib/realistic-image";
 import { requestJson as imageApi } from "@/lib/gemini-progress";
 import { watchUpdates } from "@/lib/gemini-polling";
 
@@ -170,7 +170,7 @@ export default function Chat() {
   // The quote belongs to (mode, option, reference?): a stale one counts as "loading".
   const quoteSig = openArtMode && mediaReady ? `${mode}|${mediaKey}|${refImage ? 1 : 0}|${quoteNonce}` : null;
   const q = quote && quote.sig === quoteSig ? quote : null;
-  const mediaPrompt = input.trim() || (mode === "video" && refImage ? DEFAULT_ANIMATE_PROMPT : "");
+  const mediaPrompt = (realisticMode ? imageSettings.prompt ?? input : input).trim() || (mode === "video" && refImage ? DEFAULT_ANIMATE_PROMPT : "");
   const overCap = !!q?.credits && q.remaining != null && q.credits > q.remaining;
   const canGenerate = mediaReady && !!mediaPrompt && !processing && (realisticMode
     ? !imageSubmitting && !streaming && !imagePending
@@ -588,9 +588,9 @@ export default function Chat() {
     try { await submitRealistic(request); } finally { imageSending.current = false; setImageSubmitting(false); }
   }
 
-  async function generateRealistic(raw: string, previous?: MediaResult, reuse = sameSeedIntent(raw)) {
-    const text = raw.trim();
-    if (!text || !convs || imageSending.current || streaming || imagePending || processing) return;
+  async function generateRealistic(raw: string, previous?: MediaResult, reuse = sameSeedIntent(raw), settings: ImageOverrides = imageSettings) {
+    const text = usesDirectImagePrompt(settings) ? (raw.trim() ? raw : settings.prompt ?? raw) : raw.trim();
+    if (!text.trim() || !convs || imageSending.current || streaming || imagePending || processing) return;
     if (!imageCfg?.enabled) { setToast("שרת התמונות לא זמין"); return; }
     imageSending.current = true; setImageSubmitting(true);
     try {
@@ -609,7 +609,7 @@ export default function Chat() {
         form.set("file", new File([blob], "image.jpg", { type: blob.type }));
         sourceAssetId = (await imageApi<{ id: string }>("/api/gemini/assets", { method: "POST", body: form })).id;
       }
-      const submission: ImageSubmission = { id: jobId, text, modelKey: currentKey, previousJobId: previous?.jobId, reuseSeed: reuse, settings: { ...imageSettings }, conversationId, sourceAssetId };
+      const submission: ImageSubmission = { id: jobId, text, modelKey: currentKey, previousJobId: previous?.jobId, reuseSeed: reuse, settings: { ...settings }, conversationId, sourceAssetId };
       const media: MediaResult = { kind: "image", status: "pending", provider: "realistic", jobId, prompt: text, originalRequest: text, optionKey: "generate_image", label: "Realistic Vision", modelName: "", credits: 0, statusText: "מכין את התמונה…", submission, conversationId };
       const withCard: Conversation = { ...c, updatedAt: timestamp, messages: [...c.messages,
         { role: "user", content: text, privateImage: true, ...(refImage ? { images: [refImage.thumb] } : {}) },
@@ -839,7 +839,8 @@ export default function Chat() {
                         onRetry={() => m.media?.submission && void retryRealistic(m.media.submission)}
                         onVariant={reuse => {
                           setMode("image"); chooseImageProvider("realistic");
-                          void generateRealistic(reuse ? "צור גרסה עם אותו Seed" : "צור גרסה נוספת", m.media, reuse);
+                          const directSettings = m.media?.settings?.promptMode === "direct" ? { ...m.media.settings, seed: reuse ? m.media.settings.seed : -1 } : undefined;
+                          void generateRealistic(directSettings?.prompt ?? (reuse ? "צור גרסה עם אותו Seed" : "צור גרסה נוספת"), m.media, reuse, directSettings);
                         }}
                       />
                     ) : m.media ? (

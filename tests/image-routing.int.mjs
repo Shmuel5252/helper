@@ -28,6 +28,32 @@ try{
   const worker=body=>fetch(base+'/api/worker/images',{method:'POST',headers:{Authorization:'Bearer '+workerSecret,'Content-Type':'application/json'},body:JSON.stringify(body)});
   assert.equal((await worker({action:'heartbeat',state:'ready'})).status,200,'worker authenticates independently of browser cookies');
   assert.equal((await fetch(base+'/api/worker/images',{method:'POST',body:'{}'})).status,401);
+  const quality='detailed face, sharp eyes, natural skin texture, photorealistic, high quality';
+  for(const sample of [
+    {text:'  בית ליד הים\n  ',settings:{promptMode:'direct'},expected:'  בית ליד הים\n  '},
+    {text:'  A woman in blue  ',settings:{promptMode:'direct'},expected:'  A woman in blue  , '+quality},
+    {text:'אל תשתמש בטקסט הזה',settings:{prompt:'  אישה בחולצה כחולה  '},expected:'  אישה בחולצה כחולה  , '+quality},
+    {text:'ignored',settings:{prompt:'A red house',promptMode:'ai'},expected:'A red house'},
+  ]) {
+    const direct={id:crypto.randomUUID(),text:sample.text,settings:{...sample.settings,seed:123,steps:10}};
+    const response=await request('/api/images/jobs',direct);
+    assert.equal(response.status,200);
+    const result=await response.json();
+    assert.equal(result.settings.prompt,sample.expected);
+    assert.equal(result.originalRequest,sample.text);
+    assert.equal(result.settings.promptMode,'direct');
+    assert.equal(result.settings.seed,123);assert.equal(result.settings.steps,10);
+    assert.equal(plannerCalls,0,'direct requests must never call the LLM, even when AI planning is enabled');
+    assert.equal((await request('/api/images/jobs',direct)).status,200);
+    assert.equal((await request('/api/images/jobs',{...direct,settings:{...direct.settings,promptMode:'ai',prompt:undefined}})).status,409);
+    const queued=(await (await worker({action:'claim'})).json()).job;
+    assert.equal(queued.id,direct.id);assert.equal(queued.settings.prompt,sample.expected);
+    assert.equal((await worker({action:'fail',id:queued.id,token:queued.token})).status,200);
+  }
+  for(const settings of [{promptMode:'unknown'},{prompt:42},{promptMode:'direct',prompt:'x'.repeat(2001)}]) {
+    assert.equal((await request('/api/images/jobs',{id:crypto.randomUUID(),text:'test',settings})).status,400);
+  }
+  assert.equal(plannerCalls,0);
   const input={id:crypto.randomUUID(),text:'צור דיוקן של גבר בוגר',settings:{steps:12}};
   const created=await request('/api/images/jobs',input);
   assert.equal(created.status,200);
@@ -44,5 +70,5 @@ try{
   const claimed=(await claim.json()).job;assert.equal(claimed.id,input.id);
   assert.equal((await worker({action:'fail',id:claimed.id,token:claimed.token})).status,200);
   assert.equal((await (await request('/api/images/jobs/'+input.id)).json()).status,'failed');
-  console.log('PASS image routes, local worker auth, private polling, idempotent submission and planner');
+  console.log('PASS direct Hebrew/English with zero LLM calls, advanced prompt override, validation, idempotency, worker payload, private polling and default AI planning');
 }finally{planner.close();}

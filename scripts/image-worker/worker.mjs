@@ -54,6 +54,8 @@ async function run(job){
     await call({action:'start',id:job.id,token:job.token});
     const source=job.settings.sourceAssetId?await call({action:'source',id:job.id,token:job.token}):null;
     const settings=normalizeSettings(job.settings);
+    // Routing metadata stays in the queue; the engine receives the exact direct prompt.
+    delete settings.promptMode;
     if(!source)delete settings.strength;
     const r=await fetch(new URL('/generate',apiOrigin),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...settings,...(source?{image_base64:source.image}:{})}),signal:AbortSignal.timeout(330000),redirect:'error'});
     if(r.status===429){await call({action:'defer',id:job.id,token:job.token});await unlink(journal);return;}

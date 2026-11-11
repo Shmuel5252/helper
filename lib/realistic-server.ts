@@ -11,7 +11,7 @@ import {db,supabase,conversation,assetsFor,getAssetBytes} from './archive/store'
 import {syncImageArchive} from './realistic-archive';
 import {API_KEY,BASE_URL,MODELS} from './serverConfig';
 import {resolveModel} from './models';
-import {automaticImageSettings,imageStatus,validImageOrigin,type ImageJob,type ImageOverrides,type ImageConfig} from './realistic-image';
+import {automaticImageSettings,directImagePrompt,usesDirectImagePrompt,imageStatus,validImageOrigin,type ImageJob,type ImageOverrides,type ImageConfig} from './realistic-image';
 import {LocalImageQueue} from './realistic-queue';
 import {validMedia} from './archive/worker-contract';
 
@@ -59,6 +59,11 @@ export async function publicImageJob(job:ImageJob){
 const schema={type:'object' as const,properties:{prompt:{type:'string',description:'Detailed English visual prompt, preserve user intent exactly including explicit content',maxLength:2000},negative_prompt:{type:'string',maxLength:2000},steps:{type:'integer',minimum:1,maximum:30},guidance_scale:{type:'number',minimum:1.1,maximum:12},width:{type:'integer',enum:[256,320,384,448,512]},height:{type:'integer',enum:[256,320,384,448,512]},seed:{type:'integer',minimum:-1,maximum:2147483647}},required:['prompt'],additionalProperties:false};
 export const generateImageTool={type:'function' as const,function:{name:'generate_image',description:'Generate an image.',parameters:schema}};
 async function planImage(text:string,modelKey:unknown,previous:ImageJob|null,manual:ImageOverrides,reuse:boolean){
+  if(usesDirectImagePrompt(manual)){
+    try{
+      return automaticImageSettings(reuse&&previous?{seed:previous.settings.seed}:{},{...manual,prompt:directImagePrompt(manual.prompt??text),promptMode:'direct'});
+    }catch(e){throw new ArchiveError(e instanceof Error?e.message:'הגדרות התמונה אינן תקינות.');}
+  }
   let automatic:ImageOverrides;
   if(promptAI()){
     const model=resolveModel(MODELS,modelKey);
@@ -85,6 +90,7 @@ async function planImage(text:string,modelKey:unknown,previous:ImageJob|null,man
 export async function enqueueImage(owner:string,raw:unknown){
   enabled();const x=raw as {id:string;text:string;modelKey?:unknown;previousJobId?:string;reuseSeed?:boolean;settings?:ImageOverrides;conversationId?:string;sourceAssetId?:string};
   if(!x||!uuid(x.id)||typeof x.text!=='string'||!x.text.trim()||x.text.length>4000||x.settings&&typeof x.settings!=='object')throw new ArchiveError('בקשה לא תקינה.');
+  if(x.settings&&(x.settings.promptMode!==undefined&&!['ai','direct'].includes(x.settings.promptMode)||x.settings.prompt!==undefined&&typeof x.settings.prompt!=='string'))throw new ArchiveError('הגדרות התמונה אינן תקינות.');
   if(x.conversationId&&!uuid(x.conversationId)||x.sourceAssetId&&!uuid(x.sourceAssetId))throw new ArchiveError('קובץ או שיחה אינם תקינים.');
   if(x.conversationId)await conversation(x.conversationId,owner);
   if(x.sourceAssetId){
