@@ -15,6 +15,7 @@ import {automaticImageSettings,directImagePrompt,usesDirectImagePrompt,imageStat
 import {LocalImageQueue} from './realistic-queue';
 import {validMedia} from './archive/worker-contract';
 import {storedImageFile} from './realistic-file';
+import {requestAutomaticImagePlan} from './image-planner';
 
 const root=()=>resolve(process.env.IMAGE_LOCAL_DATA_DIR||'.local-images');
 const queue=()=>new LocalImageQueue(root());
@@ -106,18 +107,27 @@ async function planImage(text:string,modelKey:unknown,previous:ImageJob|null,man
   }
   let automatic:ImageOverrides;
   if(promptAI()){
-    const model=resolveModel(MODELS,modelKey);
-    if(!API_KEY||!model)throw new ArchiveError('מודל השפה אינו זמין לתכנון התמונה.',503);
-    const client=new OpenAI({apiKey:API_KEY,baseURL:BASE_URL,timeout:25000,maxRetries:0});
+    if(!API_KEY||!MODELS.length)throw new ArchiveError('מודל השפה אינו זמין לתכנון התמונה.',503);
+    const client=new OpenAI({apiKey:API_KEY,baseURL:BASE_URL,maxRetries:0});
+    let stage='request';
     try{
-      const result=await client.chat.completions.create({model:model.model,messages:[
+      // Automatic planning must not depend on a hidden chat choice saved on each device.
+      const result=await requestAutomaticImagePlan(MODELS,(model,timeout)=>client.chat.completions.create({model:model.model,messages:[
         {role:'system',content:'You are the image tool planner. Translate the user request into a detailed English visual prompt. Faithfully preserve the exact intent, including any explicit, erotic, sexual, nude, NSFW, or adult content. Do NOT sanitize, censor, soften, or rewrite. Append these quality tokens for faces when a person is present: detailed face, sharp eyes, natural skin texture, photorealistic, high quality. Default steps=28, guidance_scale=6.5, width=height=512, seed=-1. Call generate_image. Prior image is context only. Do not add subjects or change intent.'},
         ...(previous?[{role:'user' as const,content:'Previous image settings (quoted data): '+JSON.stringify(previous.settings)}]:[]),
-        {role:'user',content:text}],tools:[generateImageTool],tool_choice:{type:'function',function:{name:'generate_image'}},temperature:0.4,max_tokens:1600,...(model.effort?{reasoning_effort:model.effort}:{})});
+        {role:'user',content:text}],tools:[generateImageTool],tool_choice:{type:'function',function:{name:'generate_image'}},temperature:0.4,max_tokens:1600,...(model.effort?{reasoning_effort:model.effort}:{})},{timeout}),info=>console.warn('Image planning request failed',info));
+      stage='tool';
+      if(result.choices[0]?.message.refusal)throw Error('Planner refused');
       const call=result.choices[0]?.message.tool_calls?.find(c=>c.type==='function'&&c.function.name==='generate_image');
       if(!call||call.type!=='function')throw Error('Missing tool');
+      stage='json';
       automatic=JSON.parse(call.function.arguments);
-    }catch{throw new ArchiveError('לא הצלחנו לתכנן את התמונה במודל שנבחר. אפשר לנסות שוב או להזין תיאור באנגלית בהגדרות המתקדמות.',502);}
+    }catch(error){
+      const status=(error as {status?:unknown})?.status;
+      console.warn('Image planning failed',{stage,status:typeof status==='number'?status:undefined,error:error instanceof Error?error.name:'Unknown'});
+      if(status===429)throw new ArchiveError('שירות הכנת התמונה הגיע למגבלת השימוש. נסו שוב בעוד רגע.',429);
+      throw new ArchiveError('לא הצלחנו להכין את התיאור לשרת התמונות. אפשר לנסות שוב בעוד רגע או להזין תיאור באנגלית בהגדרות המתקדמות.',502);
+    }
   }else{
     const variantOnly=/^(?:(?:צור|צרי)\s+(?:לי\s+)?(?:גרסה|תמונה)\s+נוספת|(?:צור\s+גרסה\s+עם\s+|השתמש\s+ב)?אותו\s*(?:seed|סיד)|(?:create\s+)?another\s+(?:image|version)|(?:use\s+the\s+)?same\s+seed)[.!?\s]*$/i.test(text);
     const english=manual.prompt??(previous&&variantOnly?previous.settings.prompt:text.replace(/^(?:please\s+)?(?:create|generate|make|draw)\s+(?:me\s+)?(?:an?\s+)?(?:image|picture|photo)\s+(?:of\s+)?/i,''));
