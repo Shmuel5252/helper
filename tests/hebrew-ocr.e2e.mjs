@@ -103,14 +103,37 @@ try{
       result.actualModelKey=payload.modelKey??null;
       result.httpStatus=response.status();
       assert.ok(payload.messages.at(-1).images?.[0]?.startsWith('data:image/jpeg;base64,'),'The actual UI did not upload the processed image');
-      result.answer=await response.text();
       if(requestedModelKey)assert.equal(result.actualModelKey,requestedModelKey,'The UI selected a different model than requested');
-      assert.equal(response.status(),200,`Chat returned HTTP ${response.status()}`);
-      assert.ok(!result.answer.includes('\u0000'),'The model stream ended with an error');
       result.stage='checking rendered answer';
       await page.getByRole('button',{name:'עצירה',exact:true}).waitFor({state:'detached',timeout:90000});
+      // Chromium cannot always reread routed streaming response bodies. Inspect what
+      // the real app consumed, saved and rendered instead of Network.getResponseBody.
+      result.alerts=(await page.getByRole('alert').allTextContents()).map(text=>text.trim()).filter(Boolean);
+      if(response.status()===200)await page.waitForFunction(()=>{
+        try{
+          const history=JSON.parse(localStorage.getItem('ai-chat:v2')||'null');
+          const conversation=history?.conversations?.find(item=>item.id===history.activeId);
+          const message=conversation?.messages?.findLast(item=>item.role==='assistant');
+          return !!(message?.error||message?.content?.trim());
+        }catch{return false;}
+      },undefined,{timeout:5000});
+      const saved=await page.evaluate(()=>{
+        try{
+          const history=JSON.parse(localStorage.getItem('ai-chat:v2')||'null');
+          const conversation=history?.conversations?.find(item=>item.id===history.activeId);
+          const message=conversation?.messages?.findLast(item=>item.role==='assistant');
+          return message?{content:message.content,error:message.error}:null;
+        }catch{return null;}
+      });
+      result.answer=saved?.content??null;
+      result.savedError=saved?.error??null;
+      assert.equal(response.status(),200,`Chat returned HTTP ${response.status()}: ${result.alerts.join(' ')||result.savedError||'No visible error detail'}`);
+      assert.deepEqual(result.alerts,[],'The app displayed an error after reading the model stream');
+      assert.equal(result.savedError,null,'The saved assistant message contains a stream error');
+      assert.ok(typeof result.answer==='string'&&result.answer.trim(),'The app did not save an assistant answer');
+      assert.ok(!result.answer.includes('\u0000'),'The saved model stream contains an error marker');
       result.visible=await page.locator('.msg-in .md').last().innerText();
-      assert.equal(normalize(result.visible),normalize(result.answer),'Rendered text differs from the model response');
+      assert.equal(normalize(result.visible),normalize(result.answer),'Rendered text differs from the saved assistant answer');
       if(testCase.translate){
         result.checks=translationChecks(result.answer);
         assert.deepEqual(Object.entries(result.checks).filter(([,passed])=>!passed).map(([name])=>name),[],'Translation omitted or changed source facts');
