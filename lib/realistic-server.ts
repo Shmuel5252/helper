@@ -14,6 +14,7 @@ import {resolveModel} from './models';
 import {automaticImageSettings,directImagePrompt,usesDirectImagePrompt,imageStatus,validImageOrigin,type ImageJob,type ImageOverrides,type ImageConfig} from './realistic-image';
 import {LocalImageQueue} from './realistic-queue';
 import {validMedia} from './archive/worker-contract';
+import {storedImageFile} from './realistic-file';
 
 const root=()=>resolve(process.env.IMAGE_LOCAL_DATA_DIR||'.local-images');
 const queue=()=>new LocalImageQueue(root());
@@ -219,8 +220,5 @@ export async function imageFile(job:ImageJob,download:boolean){
   const headers={'Cache-Control':'private, no-store','Content-Type':'image/png','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Disposition':`${download?'attachment':'inline'}; filename="image-${job.id}.png"`};
   if(imageMode()==='local')return new Response(await readFile(join(root(),'images',job.id+'.png')),{headers});
   const path=`/${BUCKET}/${job.owner}/${job.id}.png`;
-  const signed=await(await supabase('/storage/v1/object/sign'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expiresIn:60})})).json();
-  if(typeof signed.signedURL!=='string'||!signed.signedURL.startsWith('/object/sign/'))throw new ArchiveError('התמונה לא זמינה.',503);
-  const url=process.env.SUPABASE_URL!.replace(/\/$/,'')+'/storage/v1'+signed.signedURL+(download?'&download=image.png':'');
-  return new Response(null,{status:302,headers:{Location:url,'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer'}});
+  return storedImageFile('/storage/v1/object'+path,headers,supabase);
 }

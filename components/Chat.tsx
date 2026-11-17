@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowUp, Check, Copy, ImagePlus, Menu, Paperclip, Square, SquarePen, X } from "lucide-react";
 import { ERROR_MARK, MAX_CHARS, MSG_GENERIC, prepareHistory } from "@/lib/chat";
@@ -29,6 +29,7 @@ import { ImageAdvanced, RealisticImageCard, useRealisticPolling } from "./Realis
 import { sameSeedIntent, usesDirectImagePrompt, type ImageConfig, type ImageOverrides, type ImageSubmission } from "@/lib/realistic-image";
 import { requestJson as imageApi } from "@/lib/gemini-progress";
 import { watchUpdates } from "@/lib/gemini-polling";
+import { createConfigRefresh } from "@/lib/config-refresh";
 
 // Markdown is split into its own chunk so the page is ready to type before it loads.
 const Markdown = lazy(() => import("./Markdown"));
@@ -45,6 +46,12 @@ type Attachment = { id: string; thumb?: string; full?: string };
 // OpenArt generation (image/video), from /api/media/config.
 type Usage = { spent: number; cap: number | null; remaining: number | null }; // cap null = no daily limit
 type MediaConfig = { configured: boolean; available: boolean; image: PublicMediaOption[]; video: PublicMediaOption[]; usage: Usage | null };
+const isMediaConfig = (value: unknown): value is MediaConfig => !!value && typeof value === "object"
+  && "configured" in value && typeof value.configured === "boolean"
+  && "available" in value && typeof value.available === "boolean"
+  && "image" in value && Array.isArray(value.image) && "video" in value && Array.isArray(value.video);
+const isModelConfig = (value: unknown): value is { models: PublicModel[] } => !!value && typeof value === "object"
+  && "models" in value && Array.isArray(value.models);
 type Quote = { sig: string; credits?: number; remaining?: number | null; cap?: number | null; affordable?: boolean; error?: string };
 const MSG_MEDIA_UNAVAILABLE = "יצירת תמונות וסרטונים לא זמינה כרגע.";
 const DEFAULT_ANIMATE_PROMPT = "הנפש את התמונה בתנועה טבעית";
@@ -212,12 +219,11 @@ export default function Chat() {
     };
   }, [quoteSig]);
 
-  const refreshMedia = useCallback(() => {
-    fetch("/api/media/config")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => j && typeof j.configured === "boolean" && setMediaCfg(j))
-      .catch(() => {});
-  }, []);
+  const refreshMedia = useMemo(() => createConfigRefresh("/api/media/config", isMediaConfig, setMediaCfg), []);
+  const refreshModels = useMemo(() => createConfigRefresh("/api/models", isModelConfig, value => setModels(value.models)), []);
+  useEffect(() => watchUpdates(async () => {
+    await Promise.all([refreshModels(), refreshMedia()]);
+  }, window, document, 30000), [refreshModels, refreshMedia]);
 
   const updateMedia = useCallback(
     (jobId: string, patch: Partial<MediaResult>) =>
@@ -338,12 +344,7 @@ export default function Chat() {
     setNow(t);
     setExhausted(loadExhausted(getStorage(), t));
     if (matchMedia("(pointer: fine)").matches) inputRef.current?.focus();
-    fetch("/api/models")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => Array.isArray(j?.models) && setModels(j.models))
-      .catch(() => {}); // no list: no picker, the server uses its default
-    refreshMedia();
-  }, [refreshMedia]);
+  }, []);
 
   function chooseModel(key: string) {
     setLastKey(key);

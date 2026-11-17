@@ -1,4 +1,4 @@
-// Coalesce focus/visibility events during a request. Never overlap reads or retry submissions.
+// Coalesce focus/visibility/reconnect events during a request. Never overlap reads or retry submissions.
 export function watchUpdates(load:()=>Promise<void>,win:EventTarget,doc:EventTarget&{visibilityState:string},interval=5000){
   let stopped=false,running=false,again=false;
   let timer:ReturnType<typeof setTimeout>|undefined;
@@ -12,7 +12,7 @@ export function watchUpdates(load:()=>Promise<void>,win:EventTarget,doc:EventTar
     }
   }
   const wake=()=>{if(doc.visibilityState==='visible')void refresh();};
-  win.addEventListener('focus',wake);doc.addEventListener('visibilitychange',wake);
+  win.addEventListener('focus',wake);win.addEventListener('online',wake);doc.addEventListener('visibilitychange',wake);
   void refresh();
-  return ()=>{stopped=true;clearTimeout(timer);win.removeEventListener('focus',wake);doc.removeEventListener('visibilitychange',wake);};
+  return ()=>{stopped=true;clearTimeout(timer);win.removeEventListener('focus',wake);win.removeEventListener('online',wake);doc.removeEventListener('visibilitychange',wake);};
 }
